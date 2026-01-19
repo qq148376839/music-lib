@@ -77,7 +77,6 @@ func Search(keyword string) ([]model.Song, error) {
 	}
 
 	// 调试时可以打印 body 查看真实返回
-	fmt.Println(string(body))
 	if err := json.Unmarshal(body, &resp); err != nil {
 
 		
@@ -86,7 +85,6 @@ func Search(keyword string) ([]model.Song, error) {
 			
 	// 4. 转换模型
 	var songs []model.Song
-	fmt.Println(resp.Data.Song.List)
 	for _, item := range resp.Data.Song.List {
 		// --- 核心过滤逻辑 ---
 		// 过滤 VIP 和 付费歌曲 (payplay==1 表示需要付费播放)
