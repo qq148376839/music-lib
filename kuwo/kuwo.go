@@ -210,3 +210,48 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 	return "", errors.New("download url not found (copyright restricted)")
 }
+
+// GetLyric 获取歌词
+func GetLyric(songID string) (string, error) {
+	params := url.Values{}
+	params.Set("musicId", songID)
+	params.Set("httpsStatus", "1")
+
+	// 酷我歌词接口
+	apiURL := "http://m.kuwo.cn/newh5/singles/songinfoandlrc?" + params.Encode()
+	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch kuwo lyric API: %w", err)
+	}
+
+	var resp struct {
+		Data struct {
+			Lrclist []struct {
+				Time      string `json:"time"`      // 例如 "10.55" (秒)
+				LineLyric string `json:"lineLyric"` // 歌词文本
+			} `json:"lrclist"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("failed to parse kuwo lyric JSON: %w", err)
+	}
+
+	if len(resp.Data.Lrclist) == 0 {
+		return "", nil // 返回空字符串表示没有歌词
+	}
+
+	// 拼接成标准 LRC 格式: [mm:ss.xx]歌词
+	var sb strings.Builder
+	for _, line := range resp.Data.Lrclist {
+		secs, _ := strconv.ParseFloat(line.Time, 64)
+		m := int(secs) / 60
+		s := int(secs) % 60
+		ms := int((secs - float64(int(secs))) * 100)
+		
+		// 格式化为 [00:00.00]
+		sb.WriteString(fmt.Sprintf("[%02d:%02d.%02d]%s\n", m, s, ms, line.LineLyric))
+	}
+
+	return sb.String(), nil
+}

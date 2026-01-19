@@ -554,3 +554,32 @@ func extractKey(playAuth string) (string, error) {
 	finalBytes := tmpBuff[1:endIndex]
 	return string(finalBytes), nil
 }
+
+// GetLyric 获取歌词
+func GetLyric(songID string) (string, error) {
+	params := url.Values{}
+	params.Set("track_id", songID)
+	params.Set("media_type", "track")
+
+	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
+	body, err := utils.Get(v2URL, utils.WithHeader("User-Agent", UserAgent))
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch lyric API: %w", err)
+	}
+
+	var resp struct {
+		Lyric struct {
+			Content string `json:"content"` // 歌词就在这里
+		} `json:"lyric"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("failed to parse lyric JSON: %w", err)
+	}
+
+	if resp.Lyric.Content == "" {
+		return "", nil // 返回空字符串表示没有歌词
+	}
+
+	return resp.Lyric.Content, nil
+}
