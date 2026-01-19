@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -328,10 +327,6 @@ func TestKuwoGetDownloadURL(t *testing.T) {
 // 注意：Bilibili API 有严格的风控机制，频繁请求可能导致IP被封
 // 此测试默认跳过，仅在需要时通过环境变量启用
 func TestBilibiliSearch(t *testing.T) {
-	if os.Getenv("ENABLE_BILIBILI_TEST") != "1" {
-		t.Skip("跳过 Bilibili 测试（避免风控），设置 ENABLE_BILIBILI_TEST=1 启用")
-	}
-	
 	keyword := "周杰伦"
 	songs, err := bilibili.Search(keyword)
 	if err != nil {
@@ -367,10 +362,6 @@ func TestBilibiliSearch(t *testing.T) {
 // 注意：Bilibili API 有严格的风控机制，频繁请求可能导致IP被封
 // 此测试默认跳过，仅在需要时通过环境变量启用
 func TestBilibiliGetDownloadURL(t *testing.T) {
-	if os.Getenv("ENABLE_BILIBILI_TEST") != "1" {
-		t.Skip("跳过 Bilibili 测试（避免风控），设置 ENABLE_BILIBILI_TEST=1 启用")
-	}
-	
 	keyword := "周杰伦"
 	songs, err := bilibili.Search(keyword)
 	if err != nil {
