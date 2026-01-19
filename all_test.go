@@ -325,17 +325,18 @@ func TestKuwoGetDownloadURL(t *testing.T) {
 
 // TestBilibiliSearch 测试Bilibili音频搜索
 // 注意：Bilibili API 有严格的风控机制，频繁请求可能导致IP被封
-// 此测试默认跳过，仅在需要时通过环境变量启用
 func TestBilibiliSearch(t *testing.T) {
 	keyword := "周杰伦"
 	songs, err := bilibili.Search(keyword)
 	if err != nil {
-		// Bilibili API 有风控，如果搜索失败就跳过测试
-		t.Skipf("Bilibili Search failed (可能触发风控): %v", err)
+		// Bilibili API 有风控，如果搜索失败则标记为测试失败
+		t.Errorf("Bilibili Search failed (可能触发风控): %v", err)
+		return
 	}
 
 	if len(songs) == 0 {
-		t.Skip("Bilibili Search returned no songs")
+		t.Error("Bilibili Search returned no songs")
+		return
 	}
 
 	// 只检查前2首歌曲，减少请求量
@@ -360,17 +361,18 @@ func TestBilibiliSearch(t *testing.T) {
 
 // TestBilibiliGetDownloadURL 测试Bilibili音频下载链接获取
 // 注意：Bilibili API 有严格的风控机制，频繁请求可能导致IP被封
-// 此测试默认跳过，仅在需要时通过环境变量启用
 func TestBilibiliGetDownloadURL(t *testing.T) {
 	keyword := "周杰伦"
 	songs, err := bilibili.Search(keyword)
 	if err != nil {
-		// Bilibili API 有风控，如果搜索失败就跳过测试
-		t.Skipf("Bilibili Search failed (可能触发风控): %v", err)
+		// Bilibili API 有风控，如果搜索失败则标记为测试失败
+		t.Errorf("Bilibili Search failed (可能触发风控): %v", err)
+		return
 	}
 
 	if len(songs) == 0 {
-		t.Skip("No songs found for testing Bilibili GetDownloadURL")
+		t.Error("No songs found for testing Bilibili GetDownloadURL")
+		return
 	}
 
 	// 只尝试前1首歌曲，大幅减少请求量
@@ -379,8 +381,8 @@ func TestBilibiliGetDownloadURL(t *testing.T) {
 		t.Run(song.Name, func(t *testing.T) {
 			url, err := bilibili.GetDownloadURL(song)
 			if err != nil {
+				// 下载失败可能因为风控，记录但不标记为测试失败
 				t.Logf("Bilibili GetDownloadURL failed for %s: %v", song.Name, err)
-				// 不标记为失败，因为可能触发风控
 				return
 			}
 			if url == "" {
@@ -729,7 +731,7 @@ func TestAllSourcesSearch(t *testing.T) {
 		{"soda", soda.Search},
 		{"jamendo", jamendo.Search},
 		{"joox", joox.Search},
-		// 注意：bilibili 有风控，跳过
+		{"bilibili", bilibili.Search},
 	}
 
 	for _, src := range sources {
@@ -764,6 +766,143 @@ func TestAllSourcesSearch(t *testing.T) {
 				t.Errorf("%s: empty ID", src.name)
 			}
 			t.Logf("%s: Found %d songs for keyword '%s'", src.name, len(songs), keyword)
+		})
+	}
+}
+
+// TestLyricsInterfaces 测试所有平台的歌词接口
+func TestLyricsInterfaces(t *testing.T) {
+	// 测试支持歌词的平台
+	supportedSources := []struct {
+		name     string
+		search   func(string) ([]model.Song, error)
+		getLyrics func(*model.Song) (string, error)
+	}{
+		{"netease", netease.Search, netease.GetLyrics},
+		{"kuwo", kuwo.Search, kuwo.GetLyrics},
+		{"soda", soda.Search, soda.GetLyrics},
+		{"qq", qq.Search, qq.GetLyrics},
+		{"kugou", kugou.Search, kugou.GetLyrics},
+	}
+
+	for _, src := range supportedSources {
+		src := src // 捕获循环变量
+		t.Run(src.name+"_lyrics", func(t *testing.T) {
+			// 搜索歌曲
+			keyword := "周杰伦"
+			songs, err := src.search(keyword)
+			if err != nil {
+				t.Skipf("%s search failed: %v", src.name, err)
+			}
+			if len(songs) == 0 {
+				t.Skipf("%s search returned no songs", src.name)
+			}
+
+			// 测试前2首歌曲的歌词接口
+			for i := 0; i < min(2, len(songs)); i++ {
+				song := &songs[i]
+				t.Run(song.Name, func(t *testing.T) {
+					lyrics, err := src.getLyrics(song)
+					if err != nil {
+						// 歌词获取失败不标记为测试失败，因为可能没有歌词或API限制
+						t.Logf("%s GetLyrics failed for %s: %v", src.name, song.Name, err)
+						return
+					}
+					// 验证返回的歌词（如果有）
+					if lyrics != "" {
+						// 检查是否是有效的LRC格式（至少包含时间标签）
+						if !strings.Contains(lyrics, "[") || !strings.Contains(lyrics, "]") {
+							t.Logf("%s: lyrics returned but not in standard LRC format", src.name)
+						} else {
+							t.Logf("%s: Got lyrics for %s (length: %d chars)", src.name, song.Name, len(lyrics))
+						}
+					} else {
+						t.Logf("%s: No lyrics available for %s", src.name, song.Name)
+					}
+				})
+			}
+		})
+	}
+
+	// 测试不支持歌词的平台（接口存在但返回空）
+	unsupportedSources := []struct {
+		name     string
+		search   func(string) ([]model.Song, error)
+		getLyrics func(*model.Song) (string, error)
+	}{
+		{"bilibili", bilibili.Search, bilibili.GetLyrics},
+		{"fivesing", fivesing.Search, fivesing.GetLyrics},
+		{"jamendo", jamendo.Search, jamendo.GetLyrics},
+	}
+
+	for _, src := range unsupportedSources {
+		src := src // 捕获循环变量
+		t.Run(src.name+"_lyrics_unsupported", func(t *testing.T) {
+			// 搜索歌曲
+			keyword := "周杰伦"
+			songs, err := src.search(keyword)
+			if err != nil {
+				// 对于bilibili等有风控的平台，标记为测试失败
+				t.Errorf("%s search failed: %v", src.name, err)
+				return
+			}
+			if len(songs) == 0 {
+				t.Errorf("%s search returned no songs", src.name)
+				return
+			}
+
+			// 测试第一首歌曲的歌词接口
+			song := &songs[0]
+			lyrics, err := src.getLyrics(song)
+			if err != nil {
+				// 对于不支持歌词的平台，接口应该存在但不返回错误
+				t.Errorf("%s GetLyrics should not return error for unsupported platform, got: %v", src.name, err)
+				return
+			}
+			if lyrics != "" {
+				t.Logf("%s: GetLyrics returned non-empty string (length: %d) for unsupported platform", src.name, len(lyrics))
+			} else {
+				t.Logf("%s: GetLyrics correctly returns empty string for unsupported platform", src.name)
+			}
+		})
+	}
+}
+
+// TestLyricsSourceMismatch 测试歌词接口的源不匹配错误
+func TestLyricsSourceMismatch(t *testing.T) {
+	// 创建一个源不匹配的歌曲对象
+	wrongSong := &model.Song{
+		Source: "wrong_source",
+		ID:     "123",
+		Name:   "Test Song",
+		Artist: "Test Artist",
+	}
+
+	// 测试所有平台的歌词接口都应该返回source mismatch错误
+	platforms := []struct {
+		name      string
+		getLyrics func(*model.Song) (string, error)
+	}{
+		{"netease", netease.GetLyrics},
+		{"kuwo", kuwo.GetLyrics},
+		{"soda", soda.GetLyrics},
+		{"qq", qq.GetLyrics},
+		{"kugou", kugou.GetLyrics},
+		{"bilibili", bilibili.GetLyrics},
+		{"fivesing", fivesing.GetLyrics},
+		{"jamendo", jamendo.GetLyrics},
+	}
+
+	for _, platform := range platforms {
+		t.Run(platform.name+"_source_mismatch", func(t *testing.T) {
+			_, err := platform.getLyrics(wrongSong)
+			if err == nil {
+				t.Errorf("%s GetLyrics should return error for source mismatch", platform.name)
+			} else if !strings.Contains(err.Error(), "source mismatch") {
+				t.Errorf("%s GetLyrics error should contain 'source mismatch', got: %v", platform.name, err)
+			} else {
+				t.Logf("%s: Correctly returns source mismatch error: %v", platform.name, err)
+			}
 		})
 	}
 }

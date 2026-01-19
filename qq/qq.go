@@ -2,6 +2,7 @@ package qq
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +18,13 @@ import (
 const (
 	// 对应 Python config.get("ios_useragent")
 	UserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1"
-	
+
 	// 搜索 Referer
 	SearchReferer = "http://m.y.qq.com"
 	// 下载 Referer
 	DownloadReferer = "http://y.qq.com"
+	// 歌词 Referer (必须精确，否则会报 403)
+	LyricReferer = "https://y.qq.com/portal/player.html"
 )
 
 // Search 搜索歌曲
@@ -44,7 +47,7 @@ func Search(keyword string) ([]model.Song, error) {
 		return nil, err
 	}
 
-	// 3. 解析 JSON (根据提供的 JSON 重新映射字段)
+	// 3. 解析 JSON
 	var resp struct {
 		Data struct {
 			Song struct {
@@ -55,17 +58,17 @@ func Search(keyword string) ([]model.Song, error) {
 					AlbumName string `json:"albumname"`
 					AlbumMID  string `json:"albummid"`
 					Interval  int    `json:"interval"` // 时长(秒)
-					
+
 					// 不同音质的大小
 					Size128  int64 `json:"size128"`
 					Size320  int64 `json:"size320"`
 					SizeFlac int64 `json:"sizeflac"`
-					
+
 					Singer []struct {
 						Name string `json:"name"`
 					} `json:"singer"`
 
-					// 支付/权限信息 (更新字段名)
+					// 支付/权限信息
 					Pay struct {
 						PayDownload   int `json:"paydownload"`   // 1 表示需要付费下载
 						PayPlay       int `json:"payplay"`       // 1 表示需要付费播放
@@ -76,13 +79,10 @@ func Search(keyword string) ([]model.Song, error) {
 		} `json:"data"`
 	}
 
-	// 调试时可以打印 body 查看真实返回
 	if err := json.Unmarshal(body, &resp); err != nil {
-
-		
 		return nil, fmt.Errorf("qq json parse error: %w", err)
 	}
-			
+
 	// 4. 转换模型
 	var songs []model.Song
 	for _, item := range resp.Data.Song.List {
@@ -106,7 +106,6 @@ func Search(keyword string) ([]model.Song, error) {
 
 		// 下载逻辑目前主要尝试 128k (M500)，所以展示 size128 可能更准确
 		fileSize := item.Size128
-		// 如果需要下载 FLAC，可以用 item.SizeFlac
 
 		songs = append(songs, model.Song{
 			Source:   "qq",
@@ -190,7 +189,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 			utils.WithHeader("Referer", DownloadReferer),
 			utils.WithHeader("Content-Type", "application/json"),
 		}
-		
+
 		body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(jsonData), headers...)
 		if err != nil {
 			lastErr = err.Error()
@@ -217,12 +216,11 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 		if len(result.Req1.Data.MidUrlInfo) > 0 {
 			info := result.Req1.Data.MidUrlInfo[0]
-			
-			// 核心修正：如果 purl 为空，不要立即返回错误，而是记录原因并 continue 尝试下一种音质
+
+			// 如果 purl 为空，不要立即返回错误，而是记录原因并 continue 尝试下一种音质
 			if info.Purl == "" {
-				// 记录错误信息用于最后兜底返回，如 "result: 104003"
 				lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result)
-				continue 
+				continue
 			}
 
 			// 成功获取
@@ -234,11 +232,72 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	return "", fmt.Errorf("download url not found: %s", lastErr)
 }
 
-// GetLyrics 获取歌词 (QQ音乐暂不支持歌词接口)
+// GetLyrics 获取歌词
+// Python: QQSong.download_lyrics
 func GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "qq" {
 		return "", errors.New("source mismatch")
 	}
-	// QQ音乐歌词接口暂未实现
-	return "", nil
+
+	// 1. 构造请求参数
+	// 对应 Python 中的 params 构造逻辑
+	params := url.Values{}
+	params.Set("songmid", s.ID) // Python: self.mid
+	params.Set("loginUin", "0")
+	params.Set("hostUin", "0")
+	params.Set("format", "json")
+	params.Set("inCharset", "utf8")
+	params.Set("outCharset", "utf-8")
+	params.Set("notice", "0")
+	params.Set("platform", "yqq.json")
+	params.Set("needNewCode", "0")
+	// params.Set("g_tk", "5381") // 可选
+
+	apiURL := "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?" + params.Encode()
+
+	// 2. 发送请求
+	// 必须带上 Referer: https://y.qq.com/portal/player.html，否则会报 403 Forbidden
+	headers := []utils.RequestOption{
+		utils.WithHeader("Referer", LyricReferer),
+		utils.WithHeader("User-Agent", UserAgent),
+	}
+
+	body, err := utils.Get(apiURL, headers...)
+	if err != nil {
+		return "", err
+	}
+
+	// 3. 解析 JSON
+	// QQ 音乐返回的内容有时是 JSONP，有时是纯 JSON，需做兼容处理
+	var resp struct {
+		Retcode int    `json:"retcode"`
+		Lyric   string `json:"lyric"` // Base64 编码的歌词
+		Trans   string `json:"trans"` // Base64 编码的翻译
+	}
+
+	// 简单的 JSONP 清洗逻辑 (如果包含 MusicJsonCallback(...))
+	sBody := string(body)
+	if idx := strings.Index(sBody, "("); idx >= 0 {
+		sBody = sBody[idx+1:]
+		if idx2 := strings.LastIndex(sBody, ")"); idx2 >= 0 {
+			sBody = sBody[:idx2]
+		}
+	}
+
+	if err := json.Unmarshal([]byte(sBody), &resp); err != nil {
+		return "", fmt.Errorf("qq lyric json parse error: %w", err)
+	}
+
+	if resp.Lyric == "" {
+		return "", errors.New("lyric is empty or not found")
+	}
+
+	// 4. Base64 解码
+	// Python: base64.b64decode(lyric).decode("utf-8")
+	decodedBytes, err := base64.StdEncoding.DecodeString(resp.Lyric)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	return string(decodedBytes), nil
 }

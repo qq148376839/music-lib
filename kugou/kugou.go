@@ -1,6 +1,7 @@
 package kugou
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,7 +34,7 @@ func Search(keyword string) ([]model.Song, error) {
 	apiURL := "http://songsearch.kugou.com/song_search_v2?" + params.Encode()
 
 	// 2. 发送请求
-	body, err := utils.Get(apiURL, 
+	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", MobileUserAgent),
 	)
 	if err != nil {
@@ -53,8 +54,8 @@ func Search(keyword string) ([]model.Song, error) {
 				SQFileHash string      `json:"SQFileHash"` // 无损音质 Hash
 				HQFileHash string      `json:"HQFileHash"` // 高频音质 Hash
 				FileSize   interface{} `json:"FileSize"`   // 可能是数字或字符串
-				Image      string      `json:"Image"`      // [新增] 封面图片 (包含 {size} 占位符)
-				
+				Image      string      `json:"Image"`      // 封面图片 (包含 {size} 占位符)
+
 				// 支付信息
 				PayType   int `json:"PayType"`   // 关键字段
 				Privilege int `json:"Privilege"` // 权限字段 (10通常是无版权)
@@ -74,7 +75,7 @@ func Search(keyword string) ([]model.Song, error) {
 		if item.Privilege == 10 {
 			continue
 		}
-		
+
 		// 2. 确保有 Hash
 		if item.FileHash == "" && item.SQFileHash == "" && item.HQFileHash == "" {
 			continue
@@ -102,7 +103,7 @@ func Search(keyword string) ([]model.Song, error) {
 			}
 		}
 
-		// [新增] 处理封面 URL
+		// 处理封面 URL
 		// Kugou 返回的 URL 格式如: http://imge.kugou.com/stdmusic/{size}/2020.../....jpg
 		// 需要将 {size} 替换为具体数值，如 240, 480
 		coverURL := strings.Replace(item.Image, "{size}", "240", 1)
@@ -115,7 +116,7 @@ func Search(keyword string) ([]model.Song, error) {
 			Album:    item.AlbumName,
 			Duration: item.Duration,
 			Size:     size,
-			Cover:    coverURL, // 赋值封面
+			Cover:    coverURL,
 		})
 	}
 
@@ -166,6 +167,80 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	return resp.URL, nil
+}
+
+// GetLyrics 获取歌词
+// 对应 Python: KugouSong.download_lyrics
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "kugou" {
+		return "", errors.New("source mismatch")
+	}
+
+	// 1. 搜索歌词信息
+	// API: http://krcs.kugou.com/search?ver=1&client=mobi&duration=&hash={hash}&album_audio_id=
+	searchURL := fmt.Sprintf("http://krcs.kugou.com/search?ver=1&client=mobi&duration=&hash=%s&album_audio_id=", s.ID)
+
+	body, err := utils.Get(searchURL,
+		utils.WithHeader("User-Agent", MobileUserAgent),
+		utils.WithHeader("Referer", MobileReferer),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	var searchResp struct {
+		Status     int `json:"status"`
+		Candidates []struct {
+			ID        interface{} `json:"id"` // ID 可能是数字或字符串
+			AccessKey string      `json:"accesskey"`
+			Song      string      `json:"song"`
+		} `json:"candidates"`
+	}
+
+	if err := json.Unmarshal(body, &searchResp); err != nil {
+		return "", fmt.Errorf("search lyrics json parse error: %w", err)
+	}
+
+	if len(searchResp.Candidates) == 0 {
+		return "", errors.New("lyrics not found")
+	}
+
+	// 取第一个候选
+	candidate := searchResp.Candidates[0]
+
+	// 2. 下载歌词内容
+	// API: http://lyrics.kugou.com/download?ver=1&client=pc&id={id}&accesskey={accesskey}&fmt=lrc&charset=utf8
+	downloadURL := fmt.Sprintf("http://lyrics.kugou.com/download?ver=1&client=pc&id=%v&accesskey=%s&fmt=lrc&charset=utf8", candidate.ID, candidate.AccessKey)
+
+	lrcBody, err := utils.Get(downloadURL,
+		utils.WithHeader("User-Agent", MobileUserAgent),
+		utils.WithHeader("Referer", MobileReferer),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	var downloadResp struct {
+		Status  int    `json:"status"`
+		Content string `json:"content"`
+		Fmt     string `json:"fmt"`
+	}
+
+	if err := json.Unmarshal(lrcBody, &downloadResp); err != nil {
+		return "", fmt.Errorf("download lyrics json parse error: %w", err)
+	}
+
+	if downloadResp.Content == "" {
+		return "", errors.New("lyrics content is empty")
+	}
+
+	// 3. Base64 解码
+	decodedBytes, err := base64.StdEncoding.DecodeString(downloadResp.Content)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	return string(decodedBytes), nil
 }
 
 // 辅助函数：判断 Hash 是否有效

@@ -55,18 +55,18 @@ func Search(keyword string) ([]model.Song, error) {
 				TSID       string `json:"TSID"`
 				Title      string `json:"title"`
 				AlbumTitle string `json:"albumTitle"`
-				Pic        string `json:"pic"`      // [新增] 封面
-				Duration   int    `json:"duration"` // [新增] 时长
+				Pic        string `json:"pic"`      // 封面
+				Duration   int    `json:"duration"` // 时长
 				Lyric      string `json:"lyric"`
 				Artist     []struct {
 					Name string `json:"name"`
 				} `json:"artist"`
-				// [新增] 音质信息，用于获取文件大小
+				// 音质信息，用于获取文件大小
 				RateFileInfo map[string]struct {
 					Size   int64  `json:"size"`
 					Format string `json:"format"`
 				} `json:"rateFileInfo"`
-				IsVip int `json:"isVip"` // 新增：VIP 状态字段
+				IsVip int `json:"isVip"` // VIP 状态字段
 			} `json:"typeTrack"`
 		} `json:"data"`
 	}
@@ -78,8 +78,7 @@ func Search(keyword string) ([]model.Song, error) {
 	// 5. 转换模型
 	var songs []model.Song
 	for _, item := range resp.Data.TypeTrack {
-		// [核心修改] 过滤 VIP 歌曲
-		// 根据分析，isVip 为 1 的通常无法免费下载
+		// 过滤 VIP 歌曲
 		if item.IsVip != 0 {
 			continue
 		}
@@ -89,9 +88,7 @@ func Search(keyword string) ([]model.Song, error) {
 			artistNames = append(artistNames, ar.Name)
 		}
 
-		// [新增] 计算文件大小
-		// 逻辑：遍历下载时尝试的音质顺序，找到第一个存在的大小
-		// 顺序与 GetDownloadURL 保持一致：3000(无损) > 320(高品) > 128(标准) > 64
+		// 计算文件大小
 		var size int64
 		rates := []string{"3000", "320", "128", "64"}
 		for _, r := range rates {
@@ -107,9 +104,9 @@ func Search(keyword string) ([]model.Song, error) {
 			Name:     item.Title,
 			Artist:   strings.Join(artistNames, "、"),
 			Album:    item.AlbumTitle,
-			Duration: item.Duration, // [新增] 填充时长
-			Size:     size,          // [新增] 填充大小
-			Cover:    item.Pic,      // [新增] 填充封面
+			Duration: item.Duration,
+			Size:     size,
+			Cover:    item.Pic,
 		})
 	}
 
@@ -124,7 +121,6 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	// 定义音质列表 (从高到低尝试)
-	// 3000=无损, 320=高品, 128=标准
 	qualities := []string{"3000", "320", "128", "64"}
 
 	for _, rate := range qualities {
@@ -178,6 +174,58 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	return "", errors.New("download url not found")
+}
+
+// GetLyrics 获取歌词
+// 模仿 Baidu/QianQian 逻辑：获取歌曲详情 -> 提取 Lyric URL -> 下载内容
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "qianqian" {
+		return "", errors.New("source mismatch")
+	}
+
+	// 1. 构造参数 (获取歌曲详情接口)
+	params := url.Values{}
+	params.Set("TSID", s.ID)
+	params.Set("appid", AppID)
+
+	// 2. 签名
+	signParams(params)
+
+	apiURL := "https://music.91q.com/v1/song/info?" + params.Encode()
+
+	// 3. 发送请求
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Referer", Referer),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	// 4. 解析响应
+	var resp struct {
+		Data struct {
+			Lyric string `json:"lyric"` // 这是一个 .lrc 文件的 URL
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("json parse error: %w", err)
+	}
+
+	if resp.Data.Lyric == "" {
+		return "", errors.New("lyric url not found")
+	}
+
+	// 5. 下载歌词内容
+	lrcBody, err := utils.Get(resp.Data.Lyric,
+		utils.WithHeader("User-Agent", UserAgent),
+	)
+	if err != nil {
+		return "", fmt.Errorf("download lyric failed: %w", err)
+	}
+
+	return string(lrcBody), nil
 }
 
 // 辅助函数：参数签名
