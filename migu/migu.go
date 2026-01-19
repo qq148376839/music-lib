@@ -116,6 +116,12 @@ func Search(keyword string) ([]model.Song, error) {
 		// 计算大小 (MB)
 		sizeBytes, _ := strconv.ParseInt(bestFormat.Size, 10, 64)
 		
+		// 获取封面
+		var coverURL string
+		if len(item.ImgItems) > 0 {
+			coverURL = item.ImgItems[0].Img
+		}
+		
 		songs = append(songs, model.Song{
 			Source:   "migu",
 			ID:       compoundID, // 复合 ID
@@ -124,6 +130,7 @@ func Search(keyword string) ([]model.Song, error) {
 			Album:    albumName,
 			Size:     sizeBytes, // 字节数
 			Duration: 0,         // 搜索接口未直接返回时长，暂置0
+			Cover:    coverURL,
 		})
 	}
 

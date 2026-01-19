@@ -27,7 +27,6 @@ const (
 // Search 搜索歌曲
 func Search(keyword string) ([]model.Song, error) {
 	// 1. 构造参数
-	// Python: params = {"w": keyword, "format": "json", "p": 1, "n": number}
 	params := url.Values{}
 	params.Set("w", keyword)
 	params.Set("format", "json")
@@ -45,41 +44,53 @@ func Search(keyword string) ([]model.Song, error) {
 		return nil, err
 	}
 
-	// 3. 解析 JSON (增加 Pay 对象)
+	// 3. 解析 JSON (根据提供的 JSON 重新映射字段)
 	var resp struct {
 		Data struct {
 			Song struct {
 				List []struct {
 					SongID    int64  `json:"songid"`
 					SongName  string `json:"songname"`
-					SongMID   string `json:"songmid"` // 关键字段
+					SongMID   string `json:"songmid"`
 					AlbumName string `json:"albumname"`
-					Interval  int    `json:"interval"` // 时长
-					Size128   int64  `json:"size128"`
-					Singer    []struct {
+					AlbumMID  string `json:"albummid"`
+					Interval  int    `json:"interval"` // 时长(秒)
+					
+					// 不同音质的大小
+					Size128  int64 `json:"size128"`
+					Size320  int64 `json:"size320"`
+					SizeFlac int64 `json:"sizeflac"`
+					
+					Singer []struct {
 						Name string `json:"name"`
 					} `json:"singer"`
-					// 支付信息
+
+					// 支付/权限信息 (更新字段名)
 					Pay struct {
-						PayDown    int `json:"pay_down"`    // 1表示付费下载
-						PayPlay    int `json:"pay_play"`    // 1表示付费播放
-						PriceTrack int `json:"price_track"` // 价格
+						PayDownload   int `json:"paydownload"`   // 1 表示需要付费下载
+						PayPlay       int `json:"payplay"`       // 1 表示需要付费播放
+						PayTrackPrice int `json:"paytrackprice"` // 单曲价格
 					} `json:"pay"`
 				} `json:"list"`
 			} `json:"song"`
 		} `json:"data"`
 	}
 
+	// 调试时可以打印 body 查看真实返回
+	fmt.Println(string(body))
 	if err := json.Unmarshal(body, &resp); err != nil {
+
+		
 		return nil, fmt.Errorf("qq json parse error: %w", err)
 	}
-
+			
 	// 4. 转换模型
 	var songs []model.Song
+	fmt.Println(resp.Data.Song.List)
 	for _, item := range resp.Data.Song.List {
 		// --- 核心过滤逻辑 ---
-		// 过滤 VIP 和 付费歌曲
-		if item.Pay.PayDown == 1 || item.Pay.PriceTrack > 0 {
+		// 过滤 VIP 和 付费歌曲 (payplay==1 表示需要付费播放)
+		if item.Pay.PayPlay == 1 {
 			continue
 		}
 
@@ -89,14 +100,25 @@ func Search(keyword string) ([]model.Song, error) {
 			artistNames = append(artistNames, s.Name)
 		}
 
+		// 构造封面 URL
+		var coverURL string
+		if item.AlbumMID != "" {
+			coverURL = fmt.Sprintf("https://y.gtimg.cn/music/photo_new/T002R300x300M000%s.jpg", item.AlbumMID)
+		}
+
+		// 下载逻辑目前主要尝试 128k (M500)，所以展示 size128 可能更准确
+		fileSize := item.Size128
+		// 如果需要下载 FLAC，可以用 item.SizeFlac
+
 		songs = append(songs, model.Song{
 			Source:   "qq",
-			ID:       item.SongMID, // QQ 使用 SongMID 作为下载凭证，而非 SongID
+			ID:       item.SongMID,
 			Name:     item.SongName,
 			Artist:   strings.Join(artistNames, "、"),
 			Album:    item.AlbumName,
 			Duration: item.Interval,
-			Size:     item.Size128,
+			Size:     fileSize,
+			Cover:    coverURL,
 		})
 	}
 
@@ -104,38 +126,33 @@ func Search(keyword string) ([]model.Song, error) {
 }
 
 // GetDownloadURL 获取下载链接
-// 参考 Python 代码中的 _search 方法里 "non-vip / vip users using endpoint" 部分
 func GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "qq" {
 		return "", errors.New("source mismatch")
 	}
 
 	// 1. 生成随机 GUID
-	rand.Seed(time.Now().UnixNano())
-	guid := fmt.Sprintf("%d", rand.Int63n(9000000000)+1000000000)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	guid := fmt.Sprintf("%d", r.Int63n(9000000000)+1000000000)
 
 	// 2. 定义音质列表
-	// Python 代码逻辑：尝试不同前缀拼接文件名
-	// M500: 128kbps mp3 (最常用)
-	// C400: m4a
+	// 优先尝试 128k MP3，如果失败尝试 M4A
 	type Rate struct {
 		Prefix string
 		Ext    string
 	}
 	rates := []Rate{
-		{"M500", "mp3"},
-		{"C400", "m4a"},
+		{"M500", "mp3"}, // 128kbps
+		{"C400", "m4a"}, // m4a
 	}
 
-	// 3. 循环尝试获取播放地址
-	for _, r := range rates {
-		// 构造文件名: 前缀 + SongMID + SongMID + 后缀
-		// 对应 Python: f"{quality[0]}{search_result['mid']}{search_result['mid']}{quality[1]}"
-		// 注意：Python代码里这里用了两次 mid，这是 UrlGetVkey 接口的一种特征
-		filename := fmt.Sprintf("%s%s%s.%s", r.Prefix, s.ID, s.ID, r.Ext)
+	var lastErr string
 
-		// 构造 musicu.fcg 的请求体
-		// 对应 Python: QQMusicClientUtils.buildrequestdata(module="music.vkey.GetVkey", method="UrlGetVkey", ...)
+	// 3. 循环尝试获取播放地址
+	for _, rate := range rates {
+		// 构造文件名: 前缀 + SongMID + SongMID + 后缀
+		filename := fmt.Sprintf("%s%s%s.%s", rate.Prefix, s.ID, s.ID, rate.Ext)
+
 		reqData := map[string]interface{}{
 			"comm": map[string]interface{}{
 				"cv":                4747474,
@@ -170,8 +187,6 @@ func GetDownloadURL(s *model.Song) (string, error) {
 			continue
 		}
 
-		// 发送 POST 请求到统一接口
-		// 使用 utils.Post 方法
 		headers := []utils.RequestOption{
 			utils.WithHeader("User-Agent", UserAgent),
 			utils.WithHeader("Referer", DownloadReferer),
@@ -180,42 +195,43 @@ func GetDownloadURL(s *model.Song) (string, error) {
 		
 		body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(jsonData), headers...)
 		if err != nil {
+			lastErr = err.Error()
 			continue
 		}
 
-		// 解析响应
-		// 路径: req_1 -> data -> midurlinfo -> [0] -> purl
 		var result struct {
 			Req1 struct {
 				Data struct {
 					MidUrlInfo []struct {
 						Purl    string `json:"purl"`
 						WifiUrl string `json:"wifiurl"`
+						Result  int    `json:"result"`
+						ErrMsg  string `json:"errtype"`
 					} `json:"midurlinfo"`
 				} `json:"data"`
 			} `json:"req_1"`
 		}
 
 		if err := json.Unmarshal(body, &result); err != nil {
+			lastErr = "json parse error"
 			continue
 		}
 
-		// 检查是否获取到有效链接
 		if len(result.Req1.Data.MidUrlInfo) > 0 {
 			info := result.Req1.Data.MidUrlInfo[0]
-			purl := info.Purl
-			if purl == "" {
-				purl = info.WifiUrl
+			
+			// 核心修正：如果 purl 为空，不要立即返回错误，而是记录原因并 continue 尝试下一种音质
+			if info.Purl == "" {
+				// 记录错误信息用于最后兜底返回，如 "result: 104003"
+				lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result)
+				continue 
 			}
 
-			if purl != "" {
-				// 拼接最终域名
-				// 对应 Python: QQMusicClientUtils.music_domain + download_url
-				// 常用域名: http://ws.stream.qqmusic.qq.com/
-				return "http://ws.stream.qqmusic.qq.com/" + purl, nil
-			}
+			// 成功获取
+			return "http://ws.stream.qqmusic.qq.com/" + info.Purl, nil
 		}
 	}
 
-	return "", errors.New("download url not found (copyright restricted or vip required)")
+	// 所有音质都尝试失败
+	return "", fmt.Errorf("download url not found: %s", lastErr)
 }

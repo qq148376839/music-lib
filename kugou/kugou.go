@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/utils"
@@ -52,6 +53,8 @@ func Search(keyword string) ([]model.Song, error) {
 				SQFileHash string      `json:"SQFileHash"` // 无损音质 Hash
 				HQFileHash string      `json:"HQFileHash"` // 高频音质 Hash
 				FileSize   interface{} `json:"FileSize"`   // 可能是数字或字符串
+				Image      string      `json:"Image"`      // [新增] 封面图片 (包含 {size} 占位符)
+				
 				// 支付信息
 				PayType   int `json:"PayType"`   // 关键字段
 				Privilege int `json:"Privilege"` // 权限字段 (10通常是无版权)
@@ -67,19 +70,12 @@ func Search(keyword string) ([]model.Song, error) {
 	var songs []model.Song
 	for _, item := range resp.Data.Lists {
 		// --- 核心过滤逻辑 ---
-		// 1. 过滤付费 (PayType == 1 可能是VIP，但需要验证)
-		// 暂时注释掉，因为 PayType=3 对于所有歌曲都相同，但有些可以下载
-		// if item.PayType == 1 {
-		// 	continue
-		// }
+		// 1. 过滤无版权 (Privilege == 10 经常出现在无版权歌曲中)
+		if item.Privilege == 10 {
+			continue
+		}
 		
-		// 2. 过滤无版权 (Privilege == 10 经常出现在无版权歌曲中)
-		// 暂时注释掉，因为所有歌曲都是 Privilege=10
-		// if item.Privilege == 10 {
-		// 	continue
-		// }
-		
-		// 3. 确保有 Hash
+		// 2. 确保有 Hash
 		if item.FileHash == "" && item.SQFileHash == "" && item.HQFileHash == "" {
 			continue
 		}
@@ -106,6 +102,11 @@ func Search(keyword string) ([]model.Song, error) {
 			}
 		}
 
+		// [新增] 处理封面 URL
+		// Kugou 返回的 URL 格式如: http://imge.kugou.com/stdmusic/{size}/2020.../....jpg
+		// 需要将 {size} 替换为具体数值，如 240, 480
+		coverURL := strings.Replace(item.Image, "{size}", "240", 1)
+
 		songs = append(songs, model.Song{
 			Source:   "kugou",
 			ID:       finalHash, // 将计算出的最佳 Hash 作为 ID
@@ -114,6 +115,7 @@ func Search(keyword string) ([]model.Song, error) {
 			Album:    item.AlbumName,
 			Duration: item.Duration,
 			Size:     size,
+			Cover:    coverURL, // 赋值封面
 		})
 	}
 

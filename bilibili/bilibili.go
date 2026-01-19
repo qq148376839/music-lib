@@ -120,6 +120,7 @@ func Search(keyword string) ([]model.Song, error) {
 				Artist:   item.Author,
 				Album:    item.BVID, // 用 BVID 做专辑名
 				Duration: page.Duration,
+				Cover:    cover,
 				// URL 和 Size 需要在 GetDownloadURL 中获取
 			})
 		}

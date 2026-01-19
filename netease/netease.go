@@ -40,7 +40,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 	// 2. 加密参数
 	encryptedParam := EncryptLinux(string(eparamsJSON))
-	
+
 	// 3. 构造 POST 表单数据
 	form := url.Values{}
 	form.Set("eparams", encryptedParam)
@@ -50,13 +50,13 @@ func Search(keyword string) ([]model.Song, error) {
 		utils.WithHeader("Referer", Referer),
 		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
 	}
-	
+
 	body, err := utils.Post(SearchAPI, strings.NewReader(form.Encode()), headers...)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. 解析 JSON (增加 Fee 和 Privilege 字段定义)
+	// 5. 解析 JSON
 	var resp struct {
 		Result struct {
 			Songs []struct {
@@ -70,11 +70,20 @@ func Search(keyword string) ([]model.Song, error) {
 					PicURL string `json:"picUrl"`
 				} `json:"al"` // 专辑
 				Dt        int `json:"dt"` // 时长 (ms)
-				Fee       int `json:"fee"` // 关键字段: 0:免费, 1:VIP, 8:部分免费, 4:付费
 				Privilege struct {
 					Fl int `json:"fl"` // 版权标记
 					Pl int `json:"pl"` // 播放等级
 				} `json:"privilege"`
+				// 不同音质信息，用于计算大小
+				H struct {
+					Size int64 `json:"size"`
+				} `json:"h"`
+				M struct {
+					Size int64 `json:"size"`
+				} `json:"m"`
+				L struct {
+					Size int64 `json:"size"`
+				} `json:"l"`
 			} `json:"songs"`
 		} `json:"result"`
 	}
@@ -86,20 +95,23 @@ func Search(keyword string) ([]model.Song, error) {
 	// 6. 转换模型
 	var songs []model.Song
 	for _, item := range resp.Result.Songs {
-		// --- 核心过滤逻辑 ---
-		// 1. 过滤无版权 (fl == 0 通常表示无版权或下架)
-		// Python源码中写的是: if item.get("privilege").get("fl") == 0: continue
+		// --- 核心过滤逻辑 (参考 Python 代码) ---
+		
+		// 1. 过滤无版权 (fl == 0 通常表示无版权)
 		if item.Privilege.Fl == 0 {
 			continue
 		}
 
-		// 2. 过滤 VIP 和 付费专辑
-		// fee == 1: 纯 VIP 歌曲
-		// fee == 4: 付费专辑购买
-		if item.Fee == 1 || item.Fee == 4 {
-			continue
+		// 2. 计算文件大小 (模拟 Python 逻辑)
+		// 优先获取高品质大小
+		var size int64
+		if item.Privilege.Fl >= 320000 && item.H.Size > 0 {
+			size = item.H.Size
+		} else if item.Privilege.Fl >= 192000 && item.M.Size > 0 {
+			size = item.M.Size
+		} else {
+			size = item.L.Size
 		}
-		// fee == 8 通常是可以试听或下载低音质的，这里暂且保留
 
 		var artistNames []string
 		for _, ar := range item.Ar {
@@ -113,8 +125,8 @@ func Search(keyword string) ([]model.Song, error) {
 			Artist:   strings.Join(artistNames, "、"),
 			Album:    item.Al.Name,
 			Duration: item.Dt / 1000,
-			// Size 这里暂不处理，因为搜索结果里的 Size 字段非常混乱 (h, m, l 节点)
-			Size:     0,
+			Size:     size,
+			Cover:    item.Al.PicURL,
 		})
 	}
 
