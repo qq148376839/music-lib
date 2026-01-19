@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 
@@ -24,24 +27,21 @@ const (
 
 // Search 搜索歌曲
 func Search(keyword string) ([]model.Song, error) {
-	// 1. 构造搜索参数
 	params := url.Values{}
 	params.Set("q", keyword)
 	params.Set("cursor", "0")
 	params.Set("search_method", "input")
-	params.Set("aid", "386088") // 汽水音乐 Web AppID
+	params.Set("aid", "386088")
 	params.Set("device_platform", "web")
 	params.Set("channel", "pc_web")
 
 	apiURL := "https://api.qishui.com/luna/pc/search/track?" + params.Encode()
 
-	// 2. 发送请求
 	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. 解析 JSON
 	var resp struct {
 		ResultGroups []struct {
 			Data []struct {
@@ -79,10 +79,15 @@ func Search(keyword string) ([]model.Song, error) {
 		return nil, nil
 	}
 
-	// 4. 转换模型
 	var songs []model.Song
 	for _, item := range resp.ResultGroups[0].Data {
 		track := item.Entity.Track
+		if track.ID == "" {
+			continue
+		}
+
+		// 过滤 VIP 下载 (可选，参考 soda.py 逻辑可能不需要过滤，但这里保留以防万一)
+		// if track.LabelInfo.OnlyVipDownload { continue }
 
 		var artistNames []string
 		for _, ar := range track.Artists {
@@ -91,7 +96,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 		var cover string
 		if len(track.Album.UrlCover.Urls) > 0 {
-			cover = track.Album.UrlCover.Urls[0]
+			cover = track.Album.UrlCover.Urls[0] + "~c5_375x375.jpg"
 		}
 
 		var maxSize int64
@@ -116,15 +121,15 @@ func Search(keyword string) ([]model.Song, error) {
 	return songs, nil
 }
 
-// DownloadInfo 包含下载所需的 URL 和 解密 Key
+// DownloadInfo 下载信息
 type DownloadInfo struct {
-	URL      string // 加密的音频链接
-	PlayAuth string // 解密 Key (Base64)
-	Format   string // 文件格式 (m4a)
-	Size     int64  // 文件大小
+	URL      string
+	PlayAuth string
+	Format   string
+	Size     int64
 }
 
-// GetDownloadInfo 获取下载信息 (URL + Auth)
+// GetDownloadInfo 获取下载信息
 func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 	if s.Source != "soda" {
 		return nil, errors.New("source mismatch")
@@ -146,7 +151,7 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 		} `json:"track_player"`
 	}
 	if err := json.Unmarshal(v2Body, &v2Resp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse track_v2 response error: %w", err)
 	}
 
 	if v2Resp.TrackPlayer.URLPlayerInfo == "" {
@@ -174,7 +179,7 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 	}
 
 	if err := json.Unmarshal(infoBody, &infoResp); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse play info response error: %w", err)
 	}
 
 	list := infoResp.Result.Data.PlayInfoList
@@ -182,7 +187,7 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 		return nil, errors.New("no audio stream found")
 	}
 
-	// 排序取最高音质
+	// 按 Size 和 Bitrate 降序排序，和 Python 逻辑对齐
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Size != list[j].Size {
 			return list[i].Size > list[j].Size
@@ -208,19 +213,63 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 	}, nil
 }
 
-// GetDownloadURL 返回下载链接，附带 Auth Key
-// 注意：下载后的文件必须使用 DecryptAudio 函数进行解密才能播放
+// GetDownloadURL 返回下载链接
+// 注意：汽水音乐的链接需要下载后解密，如果直接在浏览器播放会失败
+// 建议使用 Download 函数下载并解密到本地
 func GetDownloadURL(s *model.Song) (string, error) {
 	info, err := GetDownloadInfo(s)
 	if err != nil {
 		return "", err
 	}
+	// 返回带 Auth 的链接，方便调试，但普通播放器无法播放
 	return info.URL + "#auth=" + url.QueryEscape(info.PlayAuth), nil
 }
 
-// --------------------------------------------------------------------------------
-// 以下为移植自 Python (sodautils.py) 的解密逻辑
-// --------------------------------------------------------------------------------
+// Download 下载并解密歌曲 (专供 Core 调用)
+func Download(s *model.Song, outputPath string) error {
+	// 1. 获取下载信息
+	info, err := GetDownloadInfo(s)
+	if err != nil {
+		return fmt.Errorf("get download info failed: %w", err)
+	}
+
+	// 2. 下载原始加密文件
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", info.URL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", UserAgent)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download status: %d", resp.StatusCode)
+	}
+
+	encryptedData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	// 3. 解密
+	decryptedData, err := DecryptAudio(encryptedData, info.PlayAuth)
+	if err != nil {
+		return fmt.Errorf("decrypt failed: %w", err)
+	}
+
+	// 4. 保存
+	err = os.WriteFile(outputPath, decryptedData, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
 
 // DecryptAudio 解密汽水音乐下载的加密音频数据
 // fileData: 下载的原始文件字节数据
@@ -231,18 +280,21 @@ func DecryptAudio(fileData []byte, playAuth string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract key: %w", err)
 	}
+	if hexKey == "" {
+		return nil, errors.New("extract key return empty")
+	}
 	keyBytes, err := hex.DecodeString(hexKey)
 	if err != nil {
 		return nil, fmt.Errorf("invalid hex key: %w", err)
 	}
 
-	// 2. 解析 MP4 Box 结构
+	// 2. 查找 moov box
 	moov, err := findBox(fileData, "moov", 0, len(fileData))
 	if err != nil {
 		return nil, errors.New("moov box not found")
 	}
 
-	// 查找 track 相关 box
+	// 3. 查找 trak -> mdia -> minf -> stbl 链路
 	trak, err := findBox(fileData, "trak", moov.offset+8, moov.offset+moov.size)
 	if err != nil {
 		return nil, errors.New("trak box not found")
@@ -260,15 +312,17 @@ func DecryptAudio(fileData []byte, playAuth string) ([]byte, error) {
 		return nil, errors.New("stbl box not found")
 	}
 
-	// 3. 获取 Sample Sizes (stsz)
+	// 4. 解析 stsz（Sample Sizes）
 	stsz, err := findBox(fileData, "stsz", stbl.offset+8, stbl.offset+stbl.size)
 	if err != nil {
 		return nil, errors.New("stsz box not found")
 	}
 	sampleSizes := parseStsz(stsz.data)
+	if len(sampleSizes) == 0 {
+		return nil, errors.New("parse stsz empty")
+	}
 
-	// 4. 获取 Encryption Info (senc)
-	// senc 可能在 moov 下，也可能在 stbl 下
+	// 5. 查找 senc box（先 moov 后 stbl，对齐 Python）
 	senc, err := findBox(fileData, "senc", moov.offset+8, moov.offset+moov.size)
 	if err != nil {
 		senc, err = findBox(fileData, "senc", stbl.offset+8, stbl.offset+stbl.size)
@@ -277,68 +331,76 @@ func DecryptAudio(fileData []byte, playAuth string) ([]byte, error) {
 		return nil, errors.New("senc box not found")
 	}
 	ivs := parseSenc(senc.data)
+	if len(ivs) == 0 {
+		return nil, errors.New("parse senc ivs empty")
+	}
 
-	// 5. 获取 Media Data (mdat)
+	// 6. 查找 mdat box
 	mdat, err := findBox(fileData, "mdat", 0, len(fileData))
 	if err != nil {
 		return nil, errors.New("mdat box not found")
 	}
 
-	// 6. 执行 AES-CTR 解密
-	// 为了安全，创建一个新的缓冲区用于存储解密后的 mdat 数据
-	decryptedMdat := make([]byte, 0, mdat.size-8)
-	readPtr := mdat.offset + 8
-
-	// 创建 Cipher Block
+	// 7. AES-CTR 解密
 	block, err := aes.NewCipher(keyBytes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create aes cipher failed: %w", err)
 	}
+
+	// 复制原始数据，避免修改原切片
+	decryptedData := make([]byte, len(fileData))
+	copy(decryptedData, fileData)
+
+	readPtr := mdat.offset + 8
+	decryptedMdat := make([]byte, 0, mdat.size-8)
 
 	for i := 0; i < len(sampleSizes); i++ {
 		size := int(sampleSizes[i])
-		if readPtr+size > len(fileData) {
+		if readPtr+size > len(decryptedData) {
 			break
 		}
-		chunk := fileData[readPtr : readPtr+size]
+		chunk := decryptedData[readPtr : readPtr+size]
 
 		if i < len(ivs) {
-			// AES-CTR Decrypt
-			// 注意：Python 代码中对每个 sample 都使用了特定的 IV
-			stream := cipher.NewCTR(block, ivs[i])
+			// IV 填充：8字节 + 8个\x00（和 Python 一致）
+			iv := ivs[i]
+			if len(iv) < 16 {
+				paddedIV := make([]byte, 16)
+				copy(paddedIV, iv)
+				iv = paddedIV
+			}
+			stream := cipher.NewCTR(block, iv)
 			dst := make([]byte, size)
 			stream.XORKeyStream(dst, chunk)
 			decryptedMdat = append(decryptedMdat, dst...)
 		} else {
-			// 如果没有 IV (通常不会发生)，直接拷贝
 			decryptedMdat = append(decryptedMdat, chunk...)
 		}
 		readPtr += size
 	}
 
-	// 7. 替换 stsd 中的 enca -> mp4a
-	stsd, err := findBox(fileData, "stsd", stbl.offset+8, stbl.offset+stbl.size)
-	if err == nil {
-		// 原地替换字节
-		stsdData := fileData[stsd.offset : stsd.offset+stsd.size]
-		if idx := bytes.Index(stsdData, []byte("enca")); idx != -1 {
-			copy(stsdData[idx:], []byte("mp4a"))
-		}
-	}
-
-	// 8. 组装最终文件
-	// 如果解密后的 mdat 大小一致，直接替换原文件中的 mdat 内容
+	// 8. 替换 mdat 数据
 	if len(decryptedMdat) == int(mdat.size)-8 {
-		copy(fileData[mdat.offset+8:], decryptedMdat)
+		copy(decryptedData[mdat.offset+8:], decryptedMdat)
 	} else {
-		// 理论上大小应该一致
 		return nil, errors.New("decrypted size mismatch")
 	}
 
-	return fileData, nil
+	// 9. 替换 stsd 中的 enca -> mp4a
+	stsd, err := findBox(fileData, "stsd", stbl.offset+8, stbl.offset+stbl.size)
+	if err == nil {
+		stsdOffset := stsd.offset
+		stsdData := decryptedData[stsdOffset : stsdOffset+stsd.size]
+		if idx := bytes.Index(stsdData, []byte("enca")); idx != -1 {
+			copy(stsdData[idx:], []byte("mp4a"))
+			copy(decryptedData[stsdOffset:], stsdData)
+		}
+	}
+
+	return decryptedData, nil
 }
 
-// --- Helper Functions (SpadeDecryptor & AudioDecryptor) ---
+// --- 工具函数（严格对齐 Python 实现）---
 
 type mp4Box struct {
 	offset int
@@ -357,7 +419,8 @@ func findBox(data []byte, boxType string, start, end int) (*mp4Box, error) {
 		if size < 8 {
 			break
 		}
-		if bytes.Equal(data[pos+4:pos+8], target) {
+		currentType := data[pos+4 : pos+8]
+		if bytes.Equal(currentType, target) {
 			return &mp4Box{
 				offset: pos,
 				size:   size,
@@ -370,7 +433,6 @@ func findBox(data []byte, boxType string, start, end int) (*mp4Box, error) {
 }
 
 func parseStsz(data []byte) []uint32 {
-	// stsz structure: version(1) + flags(3) + sample_size(4) + sample_count(4) + entry_size(4)*count
 	if len(data) < 12 {
 		return nil
 	}
@@ -384,16 +446,17 @@ func parseStsz(data []byte) []uint32 {
 		}
 	} else {
 		for i := 0; i < sampleCount; i++ {
-			if 12+i*4+4 <= len(data) {
-				sizes[i] = binary.BigEndian.Uint32(data[12+i*4 : 12+i*4+4])
+			offset := 12 + i*4
+			if offset+4 > len(data) {
+				break
 			}
+			sizes[i] = binary.BigEndian.Uint32(data[offset : offset+4])
 		}
 	}
 	return sizes
 }
 
 func parseSenc(data []byte) [][]byte {
-	// senc structure: version(1) + flags(3) + sample_count(4) + (IV(8) + [subsamples])
 	if len(data) < 8 {
 		return nil
 	}
@@ -407,11 +470,9 @@ func parseSenc(data []byte) [][]byte {
 		if ptr+8 > len(data) {
 			break
 		}
-		// IV is 8 bytes, need to pad to 16 bytes for AES-CTR
+		// 提取 8 字节 IV
 		rawIV := data[ptr : ptr+8]
-		iv := make([]byte, 16)
-		copy(iv, rawIV) // Pad with 0s
-		ivs = append(ivs, iv)
+		ivs = append(ivs, rawIV)
 		ptr += 8
 
 		if hasSubsamples {
@@ -425,15 +486,16 @@ func parseSenc(data []byte) [][]byte {
 	return ivs
 }
 
-// --- SpadeDecryptor Logic ---
-
+// bitcount 完全移植 Python 的 bitcount 逻辑
+// 【关键修复】Go 中 & 优先级高于 +，必须加括号以匹配 Python 逻辑
 func bitcount(n int) int {
-	// 32-bit integer population count logic from python
 	u := uint32(n)
 	u = u & 0xFFFFFFFF
 	u = u - ((u >> 1) & 0x55555555)
 	u = (u & 0x33333333) + ((u >> 2) & 0x33333333)
-	return int(((u + (u >> 4) & 0xF0F0F0F) * 0x1010101) >> 24)
+	// Python: ((n + (n >> 4) & 0xF0F0F0F) * 0x1010101) >> 24
+	// Go (Fix): (((u + (u >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24
+	return int((((u + (u >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24)
 }
 
 func decodeBase36(c byte) int {
@@ -485,7 +547,7 @@ func extractKey(playAuth string) (string, error) {
 	decodedLen := len(bytesData) - paddingLen - 2
 	endIndex := 1 + decodedLen - skipBytes
 
-	if endIndex > len(tmpBuff) || 1 > endIndex {
+	if endIndex > len(tmpBuff) || endIndex < 1 {
 		return "", errors.New("index out of bounds")
 	}
 
