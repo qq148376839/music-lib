@@ -233,3 +233,12 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	// 所有音质都尝试失败
 	return "", fmt.Errorf("download url not found: %s", lastErr)
 }
+
+// GetLyrics 获取歌词 (QQ音乐暂不支持歌词接口)
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "qq" {
+		return "", errors.New("source mismatch")
+	}
+	// QQ音乐歌词接口暂未实现
+	return "", nil
+}

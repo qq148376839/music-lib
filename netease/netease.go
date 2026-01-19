@@ -188,3 +188,67 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 	return resp.Data[0].URL, nil
 }
+
+// GetLyrics 获取歌词
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "netease" {
+		return "", errors.New("source mismatch")
+	}
+
+	// 1. 构造参数
+	reqData := map[string]interface{}{
+		"csrf_token": "",
+		"id":         s.ID, // model 中 ID 为 string，网易云接口通常兼容
+		"lv":         -1,   // 版本号，-1 表示获取最新
+		"tv":         -1,   // 翻译版本号
+	}
+
+	reqJSON, err := json.Marshal(reqData)
+	if err != nil {
+		return "", fmt.Errorf("json marshal error: %w", err)
+	}
+
+	// 2. WeApi 加密
+	params, encSecKey := EncryptWeApi(string(reqJSON))
+
+	// 3. 构造 POST 表单
+	form := url.Values{}
+	form.Set("params", params)
+	form.Set("encSecKey", encSecKey)
+
+	// 4. 发送请求
+	headers := []utils.RequestOption{
+		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
+	}
+
+	// 接口地址
+	lyricAPI := "https://music.163.com/weapi/song/lyric"
+
+	body, err := utils.Post(lyricAPI, strings.NewReader(form.Encode()), headers...)
+	if err != nil {
+		return "", err
+	}
+
+	// 5. 解析响应
+	var resp struct {
+		Code int `json:"code"`
+		Lrc  struct {
+			Lyric string `json:"lyric"`
+		} `json:"lrc"`
+		// 如果需要翻译歌词，可以解析 tlyric 字段
+		// Tlyric struct {
+		// 	Lyric string `json:"lyric"`
+		// } `json:"tlyric"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("json parse error: %w", err)
+	}
+
+	if resp.Code != 200 {
+		return "", fmt.Errorf("netease api error code: %d", resp.Code)
+	}
+
+	return resp.Lrc.Lyric, nil
+}

@@ -211,10 +211,14 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	return "", errors.New("download url not found (copyright restricted)")
 }
 
-// GetLyric 获取歌词
-func GetLyric(songID string) (string, error) {
+// GetLyrics 获取歌词
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "kuwo" {
+		return "", errors.New("source mismatch")
+	}
+
 	params := url.Values{}
-	params.Set("musicId", songID)
+	params.Set("musicId", s.ID)
 	params.Set("httpsStatus", "1")
 
 	// 酷我歌词接口

@@ -167,3 +167,12 @@ type DashStream struct {
 	BaseURL   string `json:"baseUrl"`
 	Bandwidth int    `json:"bandwidth"`
 }
+
+// GetLyrics 获取歌词 (B站暂不支持歌词接口)
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "bilibili" {
+		return "", errors.New("source mismatch")
+	}
+	// B站歌词接口暂未实现
+	return "", nil
+}

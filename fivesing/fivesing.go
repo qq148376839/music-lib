@@ -174,3 +174,12 @@ func removeEmTags(s string) string {
 	s = strings.ReplaceAll(s, "</em>", "")
 	return strings.TrimSpace(s)
 }
+
+// GetLyrics 获取歌词 (5sing暂不支持歌词接口)
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "fivesing" {
+		return "", errors.New("source mismatch")
+	}
+	// 5sing歌词接口暂未实现
+	return "", nil
+}

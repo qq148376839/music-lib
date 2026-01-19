@@ -161,3 +161,12 @@ func makeXJamCall(path string) string {
 
 	return fmt.Sprintf("$%s*%s~", digest, randStr)
 }
+
+// GetLyrics 获取歌词 (Jamendo暂不支持歌词接口)
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "jamendo" {
+		return "", errors.New("source mismatch")
+	}
+	// Jamendo歌词接口暂未实现
+	return "", nil
+}

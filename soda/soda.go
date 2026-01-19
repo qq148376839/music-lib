@@ -507,10 +507,14 @@ func extractKey(playAuth string) (string, error) {
 	return string(tmpBuff[1:endIndex]), nil
 }
 
-// GetLyric 获取歌词
-func GetLyric(songID string) (string, error) {
+// GetLyrics 获取歌词
+func GetLyrics(s *model.Song) (string, error) {
+	if s.Source != "soda" {
+		return "", errors.New("source mismatch")
+	}
+
 	params := url.Values{}
-	params.Set("track_id", songID)
+	params.Set("track_id", s.ID)
 	params.Set("media_type", "track")
 
 	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
