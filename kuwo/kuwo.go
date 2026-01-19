@@ -4,23 +4,27 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/utils"
 )
 
 const (
-	// 对应 Python default_search_headers
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
-// Search 搜索歌曲
-// 对应 Python: _search 方法
+func init() {
+	// 初始化随机数种子
+	rand.Seed(time.Now().UnixNano())
+}
+
+// Search 搜索歌曲 (逻辑保持不变: 优先展示 128k 大小)
 func Search(keyword string) ([]model.Song, error) {
-	// 1. 构造参数
 	params := url.Values{}
 	params.Set("vipver", "1")
 	params.Set("client", "kt")
@@ -32,13 +36,12 @@ func Search(keyword string) ([]model.Song, error) {
 	params.Set("mobi", "1")
 	params.Set("issubtitle", "1")
 	params.Set("show_copyright_off", "1")
-	params.Set("pn", "0")  // 页码
-	params.Set("rn", "10") // 每页数量
+	params.Set("pn", "0")
+	params.Set("rn", "10")
 	params.Set("all", keyword)
 
 	apiURL := "http://www.kuwo.cn/search/searchMusicBykeyWord?" + params.Encode()
 
-	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 	)
@@ -46,7 +49,6 @@ func Search(keyword string) ([]model.Song, error) {
 		return nil, err
 	}
 
-	// 3. 解析 JSON
 	var resp struct {
 		AbsList []struct {
 			MusicRID string `json:"MUSICRID"`
@@ -57,8 +59,6 @@ func Search(keyword string) ([]model.Song, error) {
 			HtsMVPic string `json:"hts_MVPIC"`
 			MInfo    string `json:"MINFO"` 
 			PayInfo  string `json:"PAY"`
-			
-			// [新增] 关键字段：资源开关
 			BitSwitch int `json:"bitSwitch"` 
 		} `json:"abslist"`
 	}
@@ -67,20 +67,14 @@ func Search(keyword string) ([]model.Song, error) {
 		return nil, fmt.Errorf("kuwo json parse error: %w", err)
 	}
 
-	// 4. 转换模型
 	var songs []model.Song
 	for _, item := range resp.AbsList {
-		// --- 核心过滤逻辑 ---
-		
-		// [新增] 过滤 BitSwitch 为 0 的无效歌曲
 		if item.BitSwitch == 0 {
 			continue
 		}
 
 		cleanID := strings.TrimPrefix(item.MusicRID, "MUSIC_")
 		duration, _ := strconv.Atoi(item.Duration)
-
-		// 解析文件大小 (使用上一轮的逻辑，匹配下载优先级)
 		size := parseSizeFromMInfo(item.MInfo)
 
 		songs = append(songs, model.Song{
@@ -98,7 +92,7 @@ func Search(keyword string) ([]model.Song, error) {
 	return songs, nil
 }
 
-// 辅助函数：根据下载优先级解析大小 (保持不变)
+// 辅助函数 (保持不变)
 func parseSizeFromMInfo(minfo string) int64 {
 	if minfo == "" {
 		return 0
@@ -137,18 +131,18 @@ func parseSizeFromMInfo(minfo string) int64 {
 		})
 	}
 
-	// 优先级: 2000kflac > flac > 320kmp3 > 128kmp3
+	// 优先级: 128kmp3 > 320kmp3 > flac > 2000kflac
 	for _, f := range formats {
-		if f.Format == "flac" && f.Bitrate == "2000" { return f.Size }
-	}
-	for _, f := range formats {
-		if f.Format == "flac" { return f.Size }
+		if f.Format == "mp3" && f.Bitrate == "128" { return f.Size }
 	}
 	for _, f := range formats {
 		if f.Format == "mp3" && f.Bitrate == "320" { return f.Size }
 	}
 	for _, f := range formats {
-		if f.Format == "mp3" && f.Bitrate == "128" { return f.Size }
+		if f.Format == "flac" { return f.Size }
+	}
+	for _, f := range formats {
+		if f.Format == "flac" && f.Bitrate == "2000" { return f.Size }
 	}
 
 	var maxSize int64
@@ -158,18 +152,23 @@ func parseSizeFromMInfo(minfo string) int64 {
 	return maxSize
 }
 
-// GetDownloadURL 获取下载链接 (保持不变)
+// GetDownloadURL 获取下载链接
 func GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "kuwo" {
 		return "", errors.New("source mismatch")
 	}
 
+	// 优先级: 优先尝试 128kmp3 (最稳定，无VIP限制)
 	qualities := []string{
-		"2000kflac", 
-		"flac",      
-		"320kmp3",   
 		"128kmp3",   
+		"320kmp3",   
+		"flac",      
+		"2000kflac", 
 	}
+
+	// [新增] 生成随机 DeviceID / UserID
+	// 格式模仿: C_APK_guanwang_ + 19位随机数字
+	randomID := fmt.Sprintf("C_APK_guanwang_%d%d", time.Now().UnixNano(), rand.Intn(1000000))
 
 	for _, br := range qualities {
 		params := url.Values{}
@@ -179,7 +178,9 @@ func GetDownloadURL(s *model.Song) (string, error) {
 		params.Set("type", "convert_url_with_sign")
 		params.Set("br", br)
 		params.Set("rid", s.ID)
-		params.Set("user", "C_APK_guanwang_12609069939969033731")
+		
+		// [修改] 使用随机生成的 User ID，避免被服务器判定为"同一用户多下载"
+		params.Set("user", randomID)
 
 		apiURL := "https://mobi.kuwo.cn/mobi.s?" + params.Encode()
 
