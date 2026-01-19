@@ -20,12 +20,10 @@ const (
 // 对应 Python: _search 方法前半部分
 func Search(keyword string) ([]model.Song, error) {
 	// 1. 构造搜索参数
-	// Python: default_rule 中包含大量字段，这里只填关键的
 	params := url.Values{}
 	params.Set("q", keyword)
 	params.Set("cursor", "0")
 	params.Set("search_method", "input")
-	// 下面这些参数虽然为空，但为了模拟客户端行为最好带上
 	params.Set("aid", "386088") // 汽水音乐 Web AppID
 	params.Set("device_platform", "web")
 	params.Set("channel", "pc_web")
@@ -39,21 +37,35 @@ func Search(keyword string) ([]model.Song, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	fmt.Println(string(body))
 	// 3. 解析 JSON
 	var resp struct {
 		ResultGroups []struct {
 			Data []struct {
 				Entity struct {
 					Track struct {
-						ID      string `json:"id"`
-						Name    string `json:"name"`
-						Artists []struct {
+						ID       string `json:"id"`
+						Name     string `json:"name"`
+						Duration int    `json:"duration"` // [新增] 时长(ms)
+						Artists  []struct {
 							Name string `json:"name"`
 						} `json:"artists"`
 						Album struct {
-							Name string `json:"name"`
+							Name     string `json:"name"`
+							UrlCover struct {
+								Urls []string `json:"urls"`
+							} `json:"url_cover"` // [新增] 封面
 						} `json:"album"`
+						
+						// [新增] 核心过滤字段：版权/VIP信息
+						LabelInfo struct {
+							OnlyVipDownload bool `json:"only_vip_download"`
+						} `json:"label_info"`
+
+						// [新增] 码率列表，用于计算大小
+						BitRates []struct {
+							Size int64 `json:"size"`
+						} `json:"bit_rates"`
 					} `json:"track"`
 				} `json:"entity"`
 			} `json:"data"`
@@ -72,14 +84,25 @@ func Search(keyword string) ([]model.Song, error) {
 	var songs []model.Song
 	for _, item := range resp.ResultGroups[0].Data {
 		track := item.Entity.Track
-		if track.ID == "" {
-			continue
-		}
 
 		// 拼接歌手
 		var artistNames []string
 		for _, ar := range track.Artists {
 			artistNames = append(artistNames, ar.Name)
+		}
+
+		// [新增] 获取封面 (取第一个 URL)
+		var cover string
+		if len(track.Album.UrlCover.Urls) > 0 {
+			cover = track.Album.UrlCover.Urls[0]
+		}
+
+		// [新增] 获取最大文件大小
+		var maxSize int64
+		for _, br := range track.BitRates {
+			if br.Size > maxSize {
+				maxSize = br.Size
+			}
 		}
 
 		songs = append(songs, model.Song{
@@ -88,7 +111,9 @@ func Search(keyword string) ([]model.Song, error) {
 			Name:     track.Name,
 			Artist:   strings.Join(artistNames, "、"),
 			Album:    track.Album.Name,
-			Duration: 0, // 搜索列表未返回时长
+			Duration: track.Duration / 1000, // ms -> s
+			Size:     maxSize,               // 填充文件大小
+			Cover:    cover,                 // 填充封面
 		})
 	}
 
@@ -104,7 +129,6 @@ type DownloadInfo struct {
 }
 
 // GetDownloadInfo 获取下载信息 (URL + Auth)
-// 对应 Python: _search 方法中的详情获取部分
 func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 	if s.Source != "soda" {
 		return nil, errors.New("source mismatch")
@@ -167,7 +191,6 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 	}
 
 	// 3. 排序取最高音质
-	// Python: sorted(video_list, key=lambda x: (x.get('Size'), x.get('Bitrate')), reverse=True)
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].Size != list[j].Size {
 			return list[i].Size > list[j].Size
@@ -201,6 +224,5 @@ func GetDownloadURL(s *model.Song) (string, error) {
 		return "", err
 	}
 	// 将 PlayAuth 附带在 URL fragment 中返回，供调用者解析（Hack 方式）
-	// 或者调用者应该直接使用 GetDownloadInfo
 	return info.URL + "#auth=" + url.QueryEscape(info.PlayAuth), nil
 }

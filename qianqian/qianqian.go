@@ -71,7 +71,6 @@ func Search(keyword string) ([]model.Song, error) {
 		} `json:"data"`
 	}
 
-	fmt.Println(string(body))
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("qianqian json parse error: %w", err)
 	}
@@ -79,8 +78,9 @@ func Search(keyword string) ([]model.Song, error) {
 	// 5. 转换模型
 	var songs []model.Song
 	for _, item := range resp.Data.TypeTrack {
-		// 过滤条件：跳过 VIP 歌曲（isVip=1）
-		if item.IsVip == 1 {
+		// [核心修改] 过滤 VIP 歌曲
+		// 根据分析，isVip 为 1 的通常无法免费下载
+		if item.IsVip != 0 {
 			continue
 		}
 		// 拼接歌手名
