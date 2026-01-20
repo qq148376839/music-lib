@@ -9,7 +9,7 @@
 - **标准化接口**: 使用通用的 `model.Song` 结构体
 - **易于测试**: 没有 `fmt.Println` 和用户交互，易于编写单元测试
 - **VIP过滤**: 自动过滤VIP和付费歌曲，仅返回免费可下载的歌曲
-- **歌词支持**: 支持获取歌曲歌词（酷我音乐源）
+- **统一歌词接口**: 所有平台都实现了统一的 `GetLyrics` 方法，支持歌词获取。目前支持歌词的平台包括：网易云音乐、酷我音乐、汽水音乐、QQ音乐、酷狗音乐、JOOX音乐、千千音乐、咪咕音乐
 - **音频解密**: 支持汽水音乐加密音频的解密功能
 - **问题修复**: 修复了酷我音乐多次下载出现示例音乐的问题
 - **展示优化**: 修复了咪咕音乐展示问题和 Jamendo 下载问题
@@ -26,6 +26,7 @@
 - ✅ Bilibili 下载问题已解决
 - ✅ 添加了歌词接口支持（酷我音乐源）
 - ✅ 添加了汽水音乐加密音频解密功能
+- ✅ 统一了所有平台的歌词接口，支持QQ音乐和酷狗音乐的歌词获取
 
 ## 支持的音源
 
@@ -135,7 +136,7 @@ func main() {
 module my-app
 go 1.25
 
-require github.com/guohuiyuan/music-lib v1.0.0
+require github.com/guohuiyuan/music-lib v1.0.1
 
 ```
 
@@ -149,6 +150,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取单首歌曲的下载地址。使用移动端 API (`m.kugou.com`)，需要正确的 User-Agent 和 Referer Header。注意：某些歌曲可能需要VIP权限。
 
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用酷狗音乐 API 获取 Base64 编码的歌词数据，自动解码为 UTF-8 文本。支持标准时间轴格式。
+
 ### qq 包
 
 #### `func Search(keyword string) ([]model.Song, error)`
@@ -156,6 +160,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取单首歌曲的下载地址。使用 QQ 音乐的统一接口 `u.y.qq.com/cgi-bin/musicu.fcg`，通过 POST 请求获取 vkey。支持 128k MP3 和 M4A 音质。注意：某些热门歌曲可能需要 VIP 权限。
+
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用 QQ 音乐 API 获取 Base64 编码的歌词数据，自动解码为 UTF-8 文本。支持标准时间轴格式。
 
 ### migu 包
 
@@ -165,6 +172,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取单首歌曲的下载地址。使用咪咕音乐的 API (`app.pd.nf.migu.cn`)，需要硬编码的 UserID。注意：返回的是 API 地址，访问时会重定向到实际文件。
 
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用咪咕音乐 API 获取歌词数据，支持标准时间轴格式。
+
 ### netease 包
 
 #### `func Search(keyword string) ([]model.Song, error)`
@@ -172,6 +182,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取单首歌曲的下载地址。使用 WeApi (`weapi/song/enhance/player/url`)，参数经过双重 AES-CBC 加密和 RSA 加密。支持 320kbps 码率。
+
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用网易云音乐 API 获取歌词数据，支持标准时间轴格式。
 
 ### kuwo 包
 
@@ -216,6 +229,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取下载链接。使用 JOOX 的播放接口获取音频流地址，支持 128k 和 320k 音质。
 
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用 JOOX 音乐 API 获取歌词数据，支持标准时间轴格式。
+
 ### qianqian 包
 
 #### `func Search(keyword string) ([]model.Song, error)`
@@ -223,6 +239,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 
 #### `func GetDownloadURL(s *model.Song) (string, error)`
 获取下载链接。使用千千音乐的播放接口获取音频流地址，支持多种音质。
+
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用千千音乐 API 获取歌词数据，支持标准时间轴格式。
 
 ### soda 包
 
@@ -241,6 +260,9 @@ require github.com/guohuiyuan/music-lib v1.0.0
 
 #### `func DecryptAudio(fileData []byte, playAuth string) ([]byte, error)`
 解密汽水音乐下载的加密音频数据。使用 AES-CTR 算法和从 PlayAuth 中提取的密钥进行解密。支持 MP4 容器格式，自动处理加密的音频样本。
+
+#### `func GetLyrics(s *model.Song) (string, error)`
+获取歌词，返回 LRC 格式的歌词字符串。使用汽水音乐 API 获取歌词数据，支持标准时间轴格式。
 
 #### `type DownloadInfo struct`
 下载信息结构体，包含下载所需的 URL 和解密 Key。
