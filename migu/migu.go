@@ -202,6 +202,16 @@ func (m *Migu) Search(keyword string) ([]model.Song, error) {
 			displaySize = pqSize
 		}
 
+		// [新增] 计算真实码率
+		// 优先使用 displaySize (通常是PQ/HQ) 进行计算，或者使用 bestInfo.size (实际下载的文件)
+		// 这里为了界面展示准确，建议使用 displaySize 计算，
+		// 但如果下载的是无损(bestInfo)，展示无损的码率会更吸引人。
+		// 策略：使用 bestInfo.size (实际能下载到的最大质量) 来计算码率
+		bitrate := 0
+		if duration > 0 && bestInfo.size > 0 {
+			bitrate = int(bestInfo.size * 8 / 1000 / duration)
+		}
+
 		compoundID := fmt.Sprintf("%s|%s|%s", item.ContentID, bestFormat.ResourceType, bestFormat.FormatType)
 		
 		var coverURL string
@@ -217,6 +227,7 @@ func (m *Migu) Search(keyword string) ([]model.Song, error) {
 			Album:    albumName,
 			Size:     displaySize,
 			Duration: int(duration),
+			Bitrate:  bitrate, // [新增]
 			Cover:    coverURL,
 			Ext:      bestInfo.ext, 
 		})

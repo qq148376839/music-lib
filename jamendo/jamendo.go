@@ -145,7 +145,8 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 			Ext:      ext,                    // 明确指定后缀
 			Cover:    item.Cover.Big.Size300, // 填充封面
 			URL:      downloadURL,            // 直接填充到 URL 字段
-			// Size:  0,                      // Jamendo 搜索结果不包含大小
+			Size:     0, // 无大小信息
+			Bitrate:  0, // [新增] 无大小信息，无法计算真实码率，置为 0
 		})
 	}
 

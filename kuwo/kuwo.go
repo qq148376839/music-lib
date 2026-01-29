@@ -102,6 +102,7 @@ func (k *Kuwo) Search(keyword string) ([]model.Song, error) {
 		cleanID := strings.TrimPrefix(item.MusicRID, "MUSIC_")
 		duration, _ := strconv.Atoi(item.Duration)
 		size := parseSizeFromMInfo(item.MInfo)
+		bitrate := parseBitrateFromMInfo(item.MInfo)
 
 		songs = append(songs, model.Song{
 			Source:   "kuwo",
@@ -111,6 +112,7 @@ func (k *Kuwo) Search(keyword string) ([]model.Song, error) {
 			Album:    item.Album,
 			Duration: duration,
 			Size:     size,
+			Bitrate:  bitrate,
 			Cover:    item.HtsMVPic,
 		})
 	}
@@ -186,6 +188,85 @@ func parseSizeFromMInfo(minfo string) int64 {
 		}
 	}
 	return maxSize
+}
+
+// 辅助函数：从 MInfo 解析码率 (不再返回 999，而是返回实际值)
+func parseBitrateFromMInfo(minfo string) int {
+	if minfo == "" {
+		return 128 // 默认128kbps
+	}
+
+	type FormatInfo struct {
+		Format  string
+		Bitrate string
+		Size    int64
+	}
+	var formats []FormatInfo
+
+	parts := strings.Split(minfo, ";")
+	for _, part := range parts {
+		kv := make(map[string]string)
+		attrs := strings.Split(part, ",")
+		for _, attr := range attrs {
+			pair := strings.Split(attr, ":")
+			if len(pair) == 2 {
+				kv[pair[0]] = pair[1]
+			}
+		}
+
+		sizeStr := kv["size"]
+		if sizeStr == "" {
+			continue
+		}
+		sizeStr = strings.TrimSuffix(strings.ToLower(sizeStr), "mb")
+		sizeMb, _ := strconv.ParseFloat(sizeStr, 64)
+		sizeBytes := int64(sizeMb * 1024 * 1024)
+
+		formats = append(formats, FormatInfo{
+			Format:  kv["format"],
+			Bitrate: kv["bitrate"],
+			Size:    sizeBytes,
+		})
+	}
+
+	// 辅助转换函数
+	toInt := func(s string) int {
+		v, _ := strconv.Atoi(s)
+		return v
+	}
+
+	// 优先级: 128kmp3 > 320kmp3 > flac > 2000kflac
+	// 注意：这里不再返回 999，而是解析 Bitrate 字符串
+	for _, f := range formats {
+		if f.Format == "mp3" && f.Bitrate == "128" {
+			return 128
+		}
+	}
+	for _, f := range formats {
+		if f.Format == "mp3" && f.Bitrate == "320" {
+			return 320
+		}
+	}
+	for _, f := range formats {
+		if f.Format == "flac" && f.Bitrate == "2000" {
+			// 酷我通常标记为 2000，如果有解析值则返回解析值，否则返回计算值或约定值
+			if val := toInt(f.Bitrate); val > 0 {
+				return val
+			}
+			return 2000 
+		}
+	}
+	for _, f := range formats {
+		if f.Format == "flac" {
+			if val := toInt(f.Bitrate); val > 0 {
+				return val
+			}
+			// 如果没有标明码率，FLAC 默认估算一个较低值或根据 Size 计算(这里没有Duration参数，暂给默认)
+			return 800 
+		}
+	}
+
+	return 128 // 默认
 }
 
 // GetDownloadURL 获取下载链接

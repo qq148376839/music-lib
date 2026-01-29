@@ -133,15 +133,24 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 			continue
 		}
 
-		// 2. 计算文件大小 (模拟 Python 逻辑)
-		// 优先获取高品质大小
+		// 2. 计算文件大小 (优先高品质)
 		var size int64
+		// 这里的 bitrate 仅作为 fallback 或者标准值，下面会重新计算
 		if item.Privilege.Fl >= 320000 && item.H.Size > 0 {
 			size = item.H.Size
 		} else if item.Privilege.Fl >= 192000 && item.M.Size > 0 {
 			size = item.M.Size
 		} else {
 			size = item.L.Size
+		}
+
+		duration := item.Dt / 1000
+		
+		// [修改] 动态计算码率: (Size * 8) / Duration / 1000
+		// 避免使用 "999" 这种魔术数字，直接展示真实计算值 (e.g. 945 kbps)
+		bitrate := 128
+		if duration > 0 && size > 0 {
+			bitrate = int(size * 8 / 1000 / int64(duration))
 		}
 
 		var artistNames []string
@@ -155,8 +164,9 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 			Name:     item.Name,
 			Artist:   strings.Join(artistNames, "、"),
 			Album:    item.Al.Name,
-			Duration: item.Dt / 1000,
+			Duration: duration,
 			Size:     size,
+			Bitrate:  bitrate,
 			Cover:    item.Al.PicURL,
 		})
 	}

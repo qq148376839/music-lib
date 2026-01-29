@@ -104,6 +104,7 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 			playBody, err := utils.Get(playURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", b.cookie))
 			
 			var estimatedSize int64 = 0
+			var bitrate int = 0 // [新增] 码率变量
 			actualDuration := page.Duration
 
 			if err == nil {
@@ -127,12 +128,15 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 					if len(playResp.Data.Dash.Flac.Audio) > 0 {
 						bestBandwidth = playResp.Data.Dash.Flac.Audio[0].Bandwidth
 					} else if len(playResp.Data.Dash.Audio) > 0 {
-						// 已经按带宽排序取第一个
 						bestBandwidth = playResp.Data.Dash.Audio[0].Bandwidth
 					}
-					// [计算公式] Size = Bandwidth(bps) * Duration(s) / 8
+					
+					// [新增] 计算逻辑
 					if bestBandwidth > 0 {
+						// Size = Bandwidth(bps) * Duration(s) / 8
 						estimatedSize = int64(bestBandwidth) * int64(actualDuration) / 8
+						// Bitrate = Bandwidth(bps) / 1000
+						bitrate = bestBandwidth / 1000
 					}
 				}
 			}
@@ -155,6 +159,7 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 				Album:    item.BVID,
 				Duration: actualDuration,
 				Size:     estimatedSize, // 现在有了计算后的 Size
+				Bitrate:  bitrate, // [新增] 赋值码率
 				Cover:    cover,
 			})
 		}

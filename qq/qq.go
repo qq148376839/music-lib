@@ -135,8 +135,22 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 			coverURL = fmt.Sprintf("https://y.gtimg.cn/music/photo_new/T002R300x300M000%s.jpg", item.AlbumMID)
 		}
 
-		// 下载逻辑目前主要尝试 128k (M500)，所以展示 size128 可能更准确
+		// [修改] 码率与大小选择逻辑
 		fileSize := item.Size128
+		bitrate := 128
+
+		if item.SizeFlac > 0 {
+			fileSize = item.SizeFlac
+			// 计算 FLAC 真实码率 (kbps)
+			if item.Interval > 0 {
+				bitrate = int(fileSize * 8 / 1000 / int64(item.Interval))
+			} else {
+				bitrate = 800 // 兜底
+			}
+		} else if item.Size320 > 0 {
+			fileSize = item.Size320
+			bitrate = 320
+		}
 
 		songs = append(songs, model.Song{
 			Source:   "qq",
@@ -146,6 +160,7 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 			Album:    item.AlbumName,
 			Duration: item.Interval,
 			Size:     fileSize,
+			Bitrate:  bitrate,
 			Cover:    coverURL,
 		})
 	}

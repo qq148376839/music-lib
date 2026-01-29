@@ -134,9 +134,13 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 			}
 		}
 
-		// 处理封面 URL
-		// Kugou 返回的 URL 格式如: http://imge.kugou.com/stdmusic/{size}/2020.../....jpg
-		// 需要将 {size} 替换为具体数值，如 240, 480
+		// [新增] 计算真实码率 (kbps)
+		// 公式: (Size * 8) / Duration / 1000
+		bitrate := 0
+		if item.Duration > 0 && size > 0 {
+			bitrate = int(size * 8 / 1000 / int64(item.Duration))
+		}
+
 		coverURL := strings.Replace(item.Image, "{size}", "240", 1)
 
 		songs = append(songs, model.Song{
@@ -147,6 +151,7 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 			Album:    item.AlbumName,
 			Duration: item.Duration,
 			Size:     size,
+			Bitrate:  bitrate, // [新增]
 			Cover:    coverURL,
 		})
 	}

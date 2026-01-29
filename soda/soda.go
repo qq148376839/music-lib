@@ -194,6 +194,13 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 			}
 		}
 
+		// [新增] 码率计算
+		bitrate := 0
+		seconds := track.Duration / 1000
+		if seconds > 0 && displaySize > 0 {
+			bitrate = int(displaySize * 8 / 1000 / int64(seconds))
+		}
+
 		songs = append(songs, model.Song{
 			Source:   "soda",
 			ID:       track.ID,
@@ -202,6 +209,7 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 			Album:    track.Album.Name,
 			Duration: track.Duration / 1000,
 			Size:     displaySize, // 智能选择后的大小
+			Bitrate:  bitrate, // [新增]
 			Cover:    cover,
 		})
 	}

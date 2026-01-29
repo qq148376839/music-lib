@@ -2,6 +2,8 @@ package model
 
 import (
 	"fmt"
+
+	"github.com/guohuiyuan/music-lib/utils"
 )
 
 // Song 是所有音乐源通用的歌曲结构
@@ -13,12 +15,13 @@ type Song struct {
 	AlbumID  string `json:"album_id"` // 某些源特有，用于获取封面
 	Duration int    `json:"duration"` // 秒
 	Size     int64  `json:"size"`     // 文件大小 (字节)
+	Bitrate  int    `json:"bitrate"`  // 码率 (kbps)
 	Source   string `json:"source"`   // kugou, netease, qq
 	URL      string `json:"url"`      // 真实下载链接
 	Ext      string `json:"ext"`      // 文件后缀 (mp3, flac...)
-	
+
 	// 新增字段
-	Cover    string `json:"cover"`    // 封面图片链接
+	Cover string `json:"cover"` // 封面图片链接
 }
 
 // FormatDuration 格式化时长 (e.g. 03:45)
@@ -40,6 +43,14 @@ func (s *Song) FormatSize() string {
 	return fmt.Sprintf("%.2f MB", mb)
 }
 
+// FormatBitrate 格式化码率 (e.g. 320 kbps) <--- 新增方法
+func (s *Song) FormatBitrate() string {
+	if s.Bitrate == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d kbps", s.Bitrate)
+}
+
 // Filename 生成清晰的文件名 (歌手 - 歌名.ext)
 func (s *Song) Filename() string {
 	ext := s.Ext
@@ -48,7 +59,7 @@ func (s *Song) Filename() string {
 	}
 	// 简单的文件名清洗，防止非法字符
 	// 实际项目中建议使用更严谨的 regex 清洗
-	return fmt.Sprintf("%s - %s.%s", s.Artist, s.Name, ext)
+	return utils.SanitizeFilename(fmt.Sprintf("%s - %s.%s", s.Artist, s.Name, ext))
 }
 
 // Display 用于简单的日志打印

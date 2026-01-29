@@ -121,10 +121,25 @@ func (q *Qianqian) Search(keyword string) ([]model.Song, error) {
 
 		// 计算文件大小 (优先寻找高音质)
 		var size int64
+		var bitrate int // [新增]
+
 		rates := []string{"3000", "320", "128", "64"}
 		for _, r := range rates {
 			if info, ok := item.RateFileInfo[r]; ok && info.Size > 0 {
 				size = info.Size
+				
+				// [新增] 码率计算逻辑
+				if item.Duration > 0 {
+					// 只要有时长，统统根据大小计算真实码率 (包括FLAC)
+					bitrate = int(size * 8 / 1000 / int64(item.Duration))
+				} else {
+					// 兜底逻辑：如果没有时长，使用 Key 值
+					if r == "3000" {
+						bitrate = 800 // 估算值
+					} else {
+						bitrate, _ = strconv.Atoi(r)
+					}
+				}
 				break
 			}
 		}
@@ -137,6 +152,7 @@ func (q *Qianqian) Search(keyword string) ([]model.Song, error) {
 			Album:    item.AlbumTitle,
 			Duration: item.Duration,
 			Size:     size,
+			Bitrate:  bitrate, // [新增]
 			Cover:    item.Pic,
 		})
 	}

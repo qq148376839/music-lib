@@ -137,7 +137,8 @@ func (j *Joox) Search(keyword string) ([]model.Song, error) {
 					Album:    info.AlbumName,
 					Duration: info.PlayDuration,
 					Cover:    cover,
-					Size:     0, // 搜索结果 JSON 中未提供文件大小
+					Size:     0, // 搜索结果无大小
+					Bitrate:  0, // [新增] 搜索结果无码率信息
 				})
 			}
 		}

@@ -98,7 +98,10 @@ func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 		artist = removeEmTags(artist)
 
 		// 估算时长: 时长(秒) = 文件大小(字节) * 8 / 码率(bps, 假设320k)
+		// 既然用 320k 估算时长，说明源文件被认为是 320k 左右
 		var duration int
+		bitrate := 320 // [新增] 默认 320kbps
+		
 		if item.SongSize > 0 {
 			duration = int((item.SongSize * 8) / 320000)
 		}
@@ -111,6 +114,7 @@ func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 			Album:    "", // 搜索结果无专辑信息
 			Duration: duration,
 			Size:     item.SongSize,
+			Bitrate:  bitrate, // [新增] 赋值
 		})
 	}
 
