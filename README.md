@@ -1,105 +1,44 @@
-# Music Library
+# 🎵 music-lib: 你的 Go 音乐聚合搜索“中枢神经”
 
-一个Go语言编写的音乐搜索和下载库，设计简洁，可以作为第三方库在其他项目中使用。
+`music-lib` 是一个专为 Go 开发者打造的纯粹的音乐搜索与下载核心库。它被精心设计为一个高度可扩展的后端模块，旨在为你的应用提供一个稳定、统一且强大的音乐数据接口。你可以把它想象成一个处理所有与音乐平台对接的“中枢神经系统”。
 
-## 主要功能
+## 核心设计
 
-- **纯函数式接口**：输入参数，返回数据，不包含UI逻辑
-- **模块化设计**：每个音乐源独立为一个包，方便维护和扩展
-- **标准化接口**：所有音乐源都使用统一的`model.Song`结构体
-- **易于测试**：没有控制台输出和用户交互，方便编写单元测试
-- **VIP过滤**：自动过滤VIP和付费歌曲，只返回免费可下载的
-- **统一歌词接口**：所有平台都实现了`GetLyrics`方法，支持歌词获取
-- **音频解密**：支持汽水音乐加密音频的解密
-- **问题修复**：解决了酷我音乐多次下载出现示例音乐的问题
+- **纯粹的后端引擎**: 我们只提供干净的函数接口，不掺杂任何 UI 逻辑，让你可以轻松地将其集成到任何 Go 项目中，无论是 Web 应用、桌面程序还是机器人。
+- **多平台无缝聚合**: 支持 **网易云、QQ 音乐、酷狗** 等十多个主流音乐平台，让你免于为每个平台单独编写适配代码的烦恼。
+- **标准化数据模型**: 无论音乐来自哪个平台，我们都将其“翻译”成统一的 `model.Song` 结构。这意味着你只需编写一次处理逻辑，就能适用于所有平台。
+- **模块化架构**: 每个音乐平台都是一个独立的 `provider`（提供者）。这种设计不仅易于维护，更让添加对新平台的支持变得像搭积木一样简单。
+- **智能音源过滤**: 自动跳过大多数需要 VIP 或付费的歌曲，优先为你筛选出可免费播放和下载的音源，让你的应用更具竞争力。
+- **强大的高级功能**:
+  - **歌词一键获取**: 为支持的平台提供统一的 `GetLyrics` 接口，轻松实现歌词功能。
+  - **音频格式无忧**: 内置对**汽水音乐**等平台特殊加密音频的解密功能，让你的用户无需关心底层细节。
 
-## 当前已知问题
+## 已支持的音乐平台
 
-1. QQ音乐源有些歌曲下载不了
-2. 汽水音乐部分音频文不对版（非VIP用户只能得到音频切片）
-3. Bilibili下载需要配置Cookie才能获取高音质音频
+| 平台 | 模块名 | 搜索 | 下载链接 | 歌词 | 备注 |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| 网易云音乐 | `netease` | ✅ | ✅ | ✅ | |
+| QQ 音乐 | `qq` | ✅ | ✅ | ✅ | |
+| 酷狗音乐 | `kugou` | ✅ | ✅ | ✅ | |
+| 酷我音乐 | `kuwo` | ✅ | ✅ | ✅ | |
+| 咪咕音乐 | `migu` | ✅ | ✅ | ✅ | |
+| 千千音乐 | `qianqian` | ✅ | ✅ | ✅ | |
+| 汽水音乐 | `soda` | ✅ | ✅ | ✅ | 支持音频解密 |
+| 5sing | `fivesing` | ✅ | ✅ | ✅ | |
+| Jamendo | `jamendo` | ✅ | ✅ | ✅ | |
+| JOOX | `joox` | ✅ | ✅ | ✅ | |
+| Bilibili | `bilibili` | ✅ | ✅ | ✅ | |
 
-## 已解决的问题
+## 快速集成
 
-- 酷我音乐多次下载出现示例音乐的问题 ✓
-- 咪咕音乐展示问题 ✓
-- Jamendo下载问题 ✓
-- Bilibili下载问题 ✓
-- 添加了歌词接口支持（酷我音乐源）✓
-- 添加了汽水音乐加密音频解密功能 ✓
-- 统一了所有平台的歌词接口 ✓
-
-## 支持的音乐平台
-
-- **网易云音乐**：国内主流平台，曲库丰富，有很多原创和独立音乐人作品
-- **QQ音乐**：腾讯旗下，华语流行音乐版权多
-- **酷狗音乐**：老牌平台，曲库量大，K歌功能强
-- **酷我音乐**：提供高品质音乐，支持无损格式
-- **咪咕音乐**：中国移动旗下，正版资源多
-- **5sing原创音乐**：专注原创音乐和翻唱，适合找独立音乐人作品
-- **Jamendo**：国际免费音乐平台，所有音乐都可免费下载使用
-- **JOOX音乐**：腾讯国际版，主要面向东南亚
-- **千千音乐**：百度旗下，整合了百度音乐资源
-- **汽水音乐**：字节跳动旗下，个性化推荐做得好
-- **Bilibili音频**：从B站视频提取音频，二次创作和同人音乐多
-
-## 项目结构
-
-```
-music-lib/
-├── go.mod
-├── model/                # 通用数据结构
-│   └── song.go
-├── utils/                # 基础工具
-│   └── request.go
-├── bilibili/             # Bilibili音频源
-│   └── bilibili.go
-├── fivesing/             # 5sing原创音乐源
-│   └── fivesing.go
-├── jamendo/              # Jamendo免费音乐源
-│   └── jamendo.go
-├── joox/                 # JOOX音乐源
-│   └── joox.go
-├── kugou/                # 酷狗音乐源
-│   └── kugou.go
-├── kuwo/                 # 酷我音乐源
-│   └── kuwo.go
-├── migu/                 # 咪咕音乐源
-│   └── migu.go
-├── netease/              # 网易云音乐源
-│   ├── crypto.go         # 加密算法
-│   └── netease.go
-├── qianqian/             # 千千音乐源
-│   └── qianqian.go
-├── qq/                   # QQ音乐源
-│   └── qq.go
-└── soda/                 # 汽水音乐源
-    └── soda.go
-```
-## 效果
-| Platform  | Search   | Download URL | Lyrics   | Notes                      |
-|-----------|----------|--------------|----------|----------------------------|
-| Kugou     | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| QQ        | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| Migu      | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| Netease   | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| Kuwo      | ✅ PASS  | ✅ PASS      | ⚠️ Skip  | No lyrics found (Safe skip)|
-| Soda      | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| Qianqian  | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
-| Joox      | ✅ PASS  | ✅ PASS      | -        |                            |
-| FiveSing  | ✅ PASS  | ✅ PASS      | ❌ FAIL  | Error return mismatch      |
-| Bilibili  | ✅ PASS  | ❌ FAIL      | ✅ PASS  | 412 Precondition Failed    |
-| Jamendo   | ❌ FAIL  | ✅ PASS      | ❌ FAIL  | Search parsing issue       |
-
-## 安装
-
+在你的项目中，通过 Go Modules 引入 `music-lib`:
 ```bash
 go get github.com/guohuiyuan/music-lib
 ```
 
-## 使用示例
+## 实战演练
 
-### 基本使用
+下面的示例将带你领略 `music-lib` 的简洁与强大。我们将演示如何搜索歌曲并获取其下载链接。
 
 ```go
 package main
@@ -107,158 +46,82 @@ package main
 import (
 	"fmt"
 	"log"
-	
-	"github.com/guohuiyuan/music-lib/kugou"
+
+	"github.com/guohuiyuan/music-lib/kugou" // 以酷狗音乐为例，你可以轻松换成其他 provider
+	"github.com/guohuiyuan/music-lib/model"
 )
 
 func main() {
 	keyword := "周杰伦"
-	
-	// 搜索歌曲
+
+	// 1. 搜索歌曲
+	// 每个 provider 包都提供了统一的 Search 函数
 	songs, err := kugou.Search(keyword)
 	if err != nil {
-		log.Fatalf("搜索失败: %v", err)
+		log.Fatalf("搜索失败，错误: %v", err)
 	}
 
-	fmt.Printf("找到 %d 首歌\n", len(songs))
-	
-	// 显示前3条结果
-	for i, song := range songs {
-		if i >= 3 {
-			break
-		}
-		fmt.Printf("%d. %s - %s (时长: %d秒)\n", i+1, song.Name, song.Artist, song.Duration)
+	if len(songs) == 0 {
+		fmt.Println("未找到相关歌曲")
+		return
 	}
 
-	// 获取下载链接
-	if len(songs) > 0 {
-		target := &songs[0]
-		url, err := kugou.GetDownloadURL(target)
-		if err != nil {
-			log.Printf("获取链接失败: %v", err)
-		} else {
-			fmt.Println("下载地址:", url)
-		}
+	fmt.Printf("在酷狗音乐找到 %d 首关于 '%s' 的歌曲:\n", len(songs), keyword)
+
+	// 2. 选择一首歌，获取下载链接
+	// 这里我们以第一首歌为例
+	firstSong := songs[0]
+	fmt.Printf("正在为 '%s - %s' 获取下载链接...\n", firstSong.Name, firstSong.Artist)
+
+	// GetDownloadURL 函数同样是每个 provider 的标配
+	downloadURL, err := kugou.GetDownloadURL(&firstSong)
+	if err != nil {
+		log.Fatalf("获取下载链接失败，错误: %v", err)
+	}
+
+	fmt.Println("下载链接已到手:")
+	fmt.Println(downloadURL)
+
+	// 3. (可选) 获取歌词
+	lyrics, err := kugou.GetLyrics(&firstSong)
+	if err != nil {
+		log.Printf("获取歌词失败，错误: %v", err)
+	} else {
+		fmt.Println("\n歌词 (LRC 格式):")
+		fmt.Println(lyrics)
 	}
 }
 ```
 
-### 在其他项目中引用
+## 架构透视
 
-```go
-// 使用者的 go.mod
-module my-app
-go 1.25
-
-require github.com/guohuiyuan/music-lib v1.0.1
+```
+music-lib/
+├── model/                # 通用数据结构 (例如，所有歌曲信息都装在 model.Song 这个“标准集装箱”里)
+│   └── song.go
+├── utils/                # 实用工具箱 (HTTP 请求、文件处理等)
+│   ├── file.go
+│   └── request.go
+├── provider/             # 所有音乐平台的“行为准则” (接口定义)
+│   └── interface.go
+├── netease/              # 网易云音乐平台的具体实现
+├── qq/                   # QQ 音乐平台的具体实现
+├── kugou/                # 酷狗音乐平台的具体实现
+...                       # 其他音乐平台，等待你的探索和贡献
+├── go.mod
+└── README.md
 ```
 
-## API 文档（部分）
+## 设计哲学
 
-### kugou 包
-
-**搜索歌曲**
-```go
-func Search(keyword string) ([]model.Song, error)
-```
-使用移动端API搜索酷狗音乐，自动选择最佳音质。
-
-**获取下载链接**
-```go
-func GetDownloadURL(s *model.Song) (string, error)
-```
-获取单首歌曲的下载地址，需要正确的User-Agent和Referer。
-
-**获取歌词**
-```go
-func GetLyrics(s *model.Song) (string, error)
-```
-返回LRC格式的歌词字符串。
-
-### qq 包
-
-**搜索歌曲**
-```go
-func Search(keyword string) ([]model.Song, error)
-```
-使用QQ音乐API搜索，自动过滤VIP和付费歌曲。
-
-**获取下载链接**
-```go
-func GetDownloadURL(s *model.Song) (string, error)
-```
-获取下载地址，支持128k MP3和M4A音质。
-
-### netease 包
-
-**搜索歌曲**
-```go
-func Search(keyword string) ([]model.Song, error)
-```
-使用网易云音乐Linux API搜索，参数经过AES-ECB加密。
-
-**获取下载链接**
-```go
-func GetDownloadURL(s *model.Song) (string, error)
-```
-使用WeApi获取下载地址，支持320kbps码率。
-
-### soda 包
-
-**搜索歌曲**
-```go
-func Search(keyword string) ([]model.Song, error)
-```
-搜索汽水音乐，返回完整的歌曲元数据。
-
-**解密音频**
-```go
-func DecryptAudio(fileData []byte, playAuth string) ([]byte, error)
-```
-解密汽水音乐下载的加密音频数据，使用AES-CTR算法。
-
-## 设计原则
-
-1. **高内聚**：每个包只负责一个明确的功能
-2. **低耦合**：包之间通过标准接口通信，减少依赖
-3. **可测试性**：纯函数设计，方便单元测试
-4. **可扩展性**：新的音乐源只需实现相同的接口就能集成
-
-## 注意事项
-
-- 有些歌曲可能需要VIP权限才能下载
-- API可能会变更，需要定期维护
-- 仅供学习和研究使用
-
-## 与 go-music-dl 集成
-
-这个库是[go-music-dl](https://github.com/guohuiyuan/go-music-dl)项目的核心依赖。go-music-dl是一个完整的Go项目，把命令行和Web服务合在一起。
-
-### 主要功能
-- **双模式运行**：支持命令行交互和Web服务
-- **现代化界面**：
-  - 命令行：用Bubble Tea做交互式表格
-  - Web：用Gin + Tailwind CSS做网页，还有Live2D看板娘
-- **完整元数据**：显示歌曲时长、大小、专辑、封面等信息
-- **统一文件命名**：下载文件自动命名为`歌手 - 歌名.mp3`
-- **歌词支持**：内置音乐播放器，支持在线试听和歌词同步
-- **音频解密**：支持汽水音乐加密音频的解密和播放
-- **封面下载**：可以同时下载歌曲封面图片
-
-### 快速开始
-```bash
-# 安装 go-music-dl
-git clone https://github.com/guohuiyuan/go-music-dl.git
-cd go-music-dl
-go build -o music-dl ./cmd/music-dl
-
-# 命令行模式
-./music-dl -k "周杰伦"
-
-# Web模式
-./music-dl web
-```
+- **高内聚，低耦合**: 每个音乐平台包（`provider`）都是一个独立的王国，它们之间互不干涉。所有 `provider` 都遵循 `provider.Interface` 这份“共同宪法”，这使得上层应用可以“一视同仁”地对待来自不同平台的数据。
+- **单一职责**: `music-lib` 的使命只有一个：获取和处理音乐数据。它不关心你的应用长什么样，也不干涉你如何存储数据。这种专注使它成为一个理想的“音乐中台”。
+- **为扩展而生**: 添加一个新的音乐平台？非常简单。只需创建一个新的包，实现 `provider.Interface` 中定义的方法，然后你就拥有了一个新的音乐源。
 
 ## 许可证
 
-GNU Affero General Public License v3.0
+本项目基于 [GNU Affero General Public License v3.0](https://github.com/guohuiyuan/music-lib/blob/main/LICENSE) 许可。
+
+## 免责声明
+
+本项目仅供个人学习和技术研究使用。在使用本库时，请务必遵守相关法律法规及各大音乐平台的用户协议。通过本库获取的任何资源，请在 24 小时内删除。我们倡导尊重和支持正版音乐。
