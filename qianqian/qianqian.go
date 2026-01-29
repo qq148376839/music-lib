@@ -23,9 +23,39 @@ const (
 	Referer   = "https://music.91q.com/player"
 )
 
+// Qianqian 结构体
+type Qianqian struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Qianqian {
+	return &Qianqian{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultQianqian = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultQianqian.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultQianqian.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultQianqian.GetLyrics(s)
+}
+
 // Search 搜索歌曲
 // 对应 Python: _search 方法
-func Search(keyword string) ([]model.Song, error) {
+func (q *Qianqian) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造基础参数
 	params := url.Values{}
 	params.Set("word", keyword)
@@ -43,6 +73,7 @@ func Search(keyword string) ([]model.Song, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Cookie", q.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -115,7 +146,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 // GetDownloadURL 获取下载链接
 // 对应 Python: 遍历 MUSIC_QUALITIES 调用 tracklink 接口
-func GetDownloadURL(s *model.Song) (string, error) {
+func (q *Qianqian) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "qianqian" {
 		return "", errors.New("source mismatch")
 	}
@@ -140,6 +171,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 		body, err := utils.Get(apiURL,
 			utils.WithHeader("User-Agent", UserAgent),
 			utils.WithHeader("Referer", Referer),
+			utils.WithHeader("Cookie", q.cookie),
 		)
 		if err != nil {
 			continue
@@ -178,7 +210,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // 逻辑：调用 song/info 接口获取歌词 URL，然后下载内容
-func GetLyrics(s *model.Song) (string, error) {
+func (q *Qianqian) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "qianqian" {
 		return "", errors.New("source mismatch")
 	}
@@ -197,6 +229,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Cookie", q.cookie),
 	)
 	if err != nil {
 		return "", err
@@ -224,6 +257,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	// 5. 下载歌词文件内容
 	lrcBody, err := utils.Get(lyricURL,
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", q.cookie),
 	)
 	if err != nil {
 		return "", fmt.Errorf("download lyric failed: %w", err)

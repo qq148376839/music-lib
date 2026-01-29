@@ -19,9 +19,39 @@ const (
 	MobileReferer   = "http://m.kugou.com"
 )
 
+// Kugou 结构体
+type Kugou struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Kugou {
+	return &Kugou{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultKugou = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultKugou.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultKugou.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultKugou.GetLyrics(s)
+}
+
 // Search 搜索歌曲
 // 对应 Python: kugou_search 函数
-func Search(keyword string) ([]model.Song, error) {
+func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造请求参数
 	// Python: params = dict(keyword=keyword, platform="WebFilter", format="json", page=1, pagesize=number)
 	params := url.Values{}
@@ -36,6 +66,7 @@ func Search(keyword string) ([]model.Song, error) {
 	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", MobileUserAgent),
+		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -125,7 +156,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 // GetDownloadURL 获取下载链接
 // 对应 Python: KugouSong.download 方法
-func GetDownloadURL(s *model.Song) (string, error) {
+func (k *Kugou) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "kugou" {
 		return "", errors.New("source mismatch")
 	}
@@ -144,6 +175,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Referer", MobileReferer),
+		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
 		return "", err
@@ -171,7 +203,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // 对应 Python: KugouSong.download_lyrics
-func GetLyrics(s *model.Song) (string, error) {
+func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "kugou" {
 		return "", errors.New("source mismatch")
 	}
@@ -183,6 +215,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	body, err := utils.Get(searchURL,
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Referer", MobileReferer),
+		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
 		return "", err
@@ -215,6 +248,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	lrcBody, err := utils.Get(downloadURL,
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Referer", MobileReferer),
+		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
 		return "", err

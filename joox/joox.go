@@ -19,9 +19,39 @@ const (
 	XForwardedFor = "36.73.34.109" // 模拟印尼 IP
 )
 
+// Joox 结构体
+type Joox struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Joox {
+	return &Joox{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultJoox = New(Cookie)
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultJoox.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultJoox.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultJoox.GetLyrics(s)
+}
+
 // Search 搜索歌曲
 // 对应 Python: _search 方法前半部分
-func Search(keyword string) ([]model.Song, error) {
+func (j *Joox) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造参数
 	params := url.Values{}
 	params.Set("country", "sg")
@@ -33,7 +63,7 @@ func Search(keyword string) ([]model.Song, error) {
 	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
-		utils.WithHeader("Cookie", Cookie),
+		utils.WithHeader("Cookie", j.cookie),
 		utils.WithHeader("X-Forwarded-For", XForwardedFor),
 	)
 	if err != nil {
@@ -117,7 +147,7 @@ func Search(keyword string) ([]model.Song, error) {
 }
 
 // GetDownloadURL 获取下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
+func (j *Joox) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "joox" {
 		return "", errors.New("source mismatch")
 	}
@@ -133,7 +163,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
-		utils.WithHeader("Cookie", Cookie),
+		utils.WithHeader("Cookie", j.cookie),
 		utils.WithHeader("X-Forwarded-For", XForwardedFor),
 	)
 	if err != nil {
@@ -206,7 +236,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // 对应 Python: _search 中的 lyric results 部分
-func GetLyrics(s *model.Song) (string, error) {
+func (j *Joox) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "joox" {
 		return "", errors.New("source mismatch")
 	}
@@ -223,7 +253,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
-		utils.WithHeader("Cookie", Cookie),
+		utils.WithHeader("Cookie", j.cookie),
 		utils.WithHeader("X-Forwarded-For", XForwardedFor),
 	)
 	if err != nil {

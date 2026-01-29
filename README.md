@@ -76,6 +76,20 @@ music-lib/
 └── soda/                 # 汽水音乐源
     └── soda.go
 ```
+## 效果
+| Platform  | Search   | Download URL | Lyrics   | Notes                      |
+|-----------|----------|--------------|----------|----------------------------|
+| Kugou     | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| QQ        | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| Migu      | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| Netease   | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| Kuwo      | ✅ PASS  | ✅ PASS      | ⚠️ Skip  | No lyrics found (Safe skip)|
+| Soda      | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| Qianqian  | ✅ PASS  | ✅ PASS      | ✅ PASS  |                            |
+| Joox      | ✅ PASS  | ✅ PASS      | -        |                            |
+| FiveSing  | ✅ PASS  | ✅ PASS      | ❌ FAIL  | Error return mismatch      |
+| Bilibili  | ✅ PASS  | ❌ FAIL      | ✅ PASS  | 412 Precondition Failed    |
+| Jamendo   | ❌ FAIL  | ✅ PASS      | ❌ FAIL  | Search parsing issue       |
 
 ## 安装
 

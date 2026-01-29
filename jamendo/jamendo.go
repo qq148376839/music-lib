@@ -8,9 +8,6 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
-	"strings"
-	"time"
-
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/utils"
 )
@@ -23,13 +20,39 @@ const (
 	SearchApiPath = "/api/search" // 用于签名计算
 )
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
+// Jamendo 结构体
+type Jamendo struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Jamendo {
+	return &Jamendo{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultJamendo = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultJamendo.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultJamendo.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultJamendo.GetLyrics(s)
 }
 
 // Search 搜索歌曲
 // 对应 Python: _search 方法
-func Search(keyword string) ([]model.Song, error) {
+func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造搜索参数
 	params := url.Values{}
 	params.Set("query", keyword)
@@ -49,6 +72,7 @@ func Search(keyword string) ([]model.Song, error) {
 		utils.WithHeader("x-jam-call", xJamCall),
 		utils.WithHeader("x-jam-version", XJamVersion),
 		utils.WithHeader("x-requested-with", "XMLHttpRequest"),
+		utils.WithHeader("Cookie", j.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -76,6 +100,7 @@ func Search(keyword string) ([]model.Song, error) {
 		Stream   map[string]string `json:"stream"`
 	}
 
+	// fmt.Println(string(body)) // 调试用
 	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("jamendo json parse error: %w", err)
 	}
@@ -110,19 +135,16 @@ func Search(keyword string) ([]model.Song, error) {
 			continue // 没有有效链接
 		}
 
-		// [核心修改] 将下载链接拼接到 ID 中，确保 GetDownloadURL 能获取到
-		// 格式: ID|DownloadURL
-		compoundID := fmt.Sprintf("%d|%s", item.ID, downloadURL)
-
 		songs = append(songs, model.Song{
 			Source:   "jamendo",
-			ID:       compoundID,             // 存储复合ID
+			ID:       fmt.Sprintf("%d", item.ID), // 使用纯 ID
 			Name:     item.Name,
 			Artist:   item.Artist.Name,
 			Album:    item.Album.Name,
 			Duration: item.Duration,
 			Ext:      ext,                    // 明确指定后缀
 			Cover:    item.Cover.Big.Size300, // 填充封面
+			URL:      downloadURL,            // 直接填充到 URL 字段
 			// Size:  0,                      // Jamendo 搜索结果不包含大小
 		})
 	}
@@ -131,23 +153,17 @@ func Search(keyword string) ([]model.Song, error) {
 }
 
 // GetDownloadURL 获取下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
+func (j *Jamendo) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "jamendo" {
 		return "", errors.New("source mismatch")
 	}
 
-	// [核心修改] 从复合 ID 中提取下载链接
-	parts := strings.SplitN(s.ID, "|", 2)
-	if len(parts) == 2 {
-		return parts[1], nil
+	// 直接从 URL 字段获取，不再尝试从 ID 解析
+	if s.URL == "" {
+		return "", errors.New("download url missing in song")
 	}
 
-	// 兼容旧逻辑：如果 ID 中没有 URL，尝试读取 s.URL (如果 struct 支持)
-	if s.URL != "" {
-		return s.URL, nil
-	}
-
-	return "", errors.New("download url missing in song ID")
+	return s.URL, nil
 }
 
 // makeXJamCall 生成动态签名
@@ -163,7 +179,7 @@ func makeXJamCall(path string) string {
 }
 
 // GetLyrics 获取歌词 (Jamendo暂不支持歌词接口)
-func GetLyrics(s *model.Song) (string, error) {
+func (j *Jamendo) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "jamendo" {
 		return "", errors.New("source mismatch")
 	}

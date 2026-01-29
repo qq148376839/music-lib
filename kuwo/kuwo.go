@@ -18,13 +18,38 @@ const (
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
-func init() {
-	// 初始化随机数种子
-	rand.Seed(time.Now().UnixNano())
+// Kuwo 结构体
+type Kuwo struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Kuwo {
+	return &Kuwo{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultKuwo = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultKuwo.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultKuwo.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultKuwo.GetLyrics(s)
 }
 
 // Search 搜索歌曲 (逻辑保持不变: 优先展示 128k 大小)
-func Search(keyword string) ([]model.Song, error) {
+func (k *Kuwo) Search(keyword string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("vipver", "1")
 	params.Set("client", "kt")
@@ -44,6 +69,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -57,9 +83,9 @@ func Search(keyword string) ([]model.Song, error) {
 			Album    string `json:"ALBUM"`
 			Duration string `json:"DURATION"`
 			HtsMVPic string `json:"hts_MVPIC"`
-			MInfo    string `json:"MINFO"` 
+			MInfo    string `json:"MINFO"`
 			PayInfo  string `json:"PAY"`
-			BitSwitch int `json:"bitSwitch"` 
+			BitSwitch int `json:"bitSwitch"`
 		} `json:"abslist"`
 	}
 
@@ -133,37 +159,47 @@ func parseSizeFromMInfo(minfo string) int64 {
 
 	// 优先级: 128kmp3 > 320kmp3 > flac > 2000kflac
 	for _, f := range formats {
-		if f.Format == "mp3" && f.Bitrate == "128" { return f.Size }
+		if f.Format == "mp3" && f.Bitrate == "128" {
+			return f.Size
+		}
 	}
 	for _, f := range formats {
-		if f.Format == "mp3" && f.Bitrate == "320" { return f.Size }
+		if f.Format == "mp3" && f.Bitrate == "320" {
+			return f.Size
+		}
 	}
 	for _, f := range formats {
-		if f.Format == "flac" { return f.Size }
+		if f.Format == "flac" {
+			return f.Size
+		}
 	}
 	for _, f := range formats {
-		if f.Format == "flac" && f.Bitrate == "2000" { return f.Size }
+		if f.Format == "flac" && f.Bitrate == "2000" {
+			return f.Size
+		}
 	}
 
 	var maxSize int64
 	for _, f := range formats {
-		if f.Size > maxSize { maxSize = f.Size }
+		if f.Size > maxSize {
+			maxSize = f.Size
+		}
 	}
 	return maxSize
 }
 
 // GetDownloadURL 获取下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
+func (k *Kuwo) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "kuwo" {
 		return "", errors.New("source mismatch")
 	}
 
 	// 优先级: 优先尝试 128kmp3 (最稳定，无VIP限制)
 	qualities := []string{
-		"128kmp3",   
-		"320kmp3",   
-		"flac",      
-		"2000kflac", 
+		"128kmp3",
+		"320kmp3",
+		"flac",
+		"2000kflac",
 	}
 
 	// [新增] 生成随机 DeviceID / UserID
@@ -178,7 +214,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 		params.Set("type", "convert_url_with_sign")
 		params.Set("br", br)
 		params.Set("rid", s.ID)
-		
+
 		// [修改] 使用随机生成的 User ID，避免被服务器判定为"同一用户多下载"
 		params.Set("user", randomID)
 
@@ -186,6 +222,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 		body, err := utils.Get(apiURL,
 			utils.WithHeader("User-Agent", UserAgent),
+			utils.WithHeader("Cookie", k.cookie),
 		)
 		if err != nil {
 			continue
@@ -212,7 +249,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 }
 
 // GetLyrics 获取歌词
-func GetLyrics(s *model.Song) (string, error) {
+func (k *Kuwo) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "kuwo" {
 		return "", errors.New("source mismatch")
 	}
@@ -223,7 +260,10 @@ func GetLyrics(s *model.Song) (string, error) {
 
 	// 酷我歌词接口
 	apiURL := "http://m.kuwo.cn/newh5/singles/songinfoandlrc?" + params.Encode()
-	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", k.cookie),
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch kuwo lyric API: %w", err)
 	}
@@ -252,7 +292,7 @@ func GetLyrics(s *model.Song) (string, error) {
 		m := int(secs) / 60
 		s := int(secs) % 60
 		ms := int((secs - float64(int(secs))) * 100)
-		
+
 		// 格式化为 [00:00.00]
 		sb.WriteString(fmt.Sprintf("[%02d:%02d.%02d]%s\n", m, s, ms, line.LineLyric))
 	}

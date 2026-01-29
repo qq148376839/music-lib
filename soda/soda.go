@@ -27,8 +27,48 @@ const (
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
-// Search 搜索歌曲
+// Soda 结构体
+type Soda struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Soda {
+	return &Soda{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultSoda = New("")
+
+// Search 搜索歌曲（向后兼容）
 func Search(keyword string) ([]model.Song, error) {
+	return defaultSoda.Search(keyword)
+}
+
+// GetDownloadInfo 获取下载信息（向后兼容）
+func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
+	return defaultSoda.GetDownloadInfo(s)
+}
+
+// GetDownloadURL 返回下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultSoda.GetDownloadURL(s)
+}
+
+// Download 下载并解密歌曲（向后兼容）
+func Download(s *model.Song, outputPath string) error {
+	return defaultSoda.Download(s, outputPath)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultSoda.GetLyrics(s)
+}
+
+// Search 搜索歌曲
+func (s *Soda) Search(keyword string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("q", keyword)
 	params.Set("cursor", "0")
@@ -39,7 +79,10 @@ func Search(keyword string) ([]model.Song, error) {
 
 	apiURL := "https://api.qishui.com/luna/pc/search/track?" + params.Encode()
 
-	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	body, err := utils.Get(apiURL, 
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", s.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -175,17 +218,20 @@ type DownloadInfo struct {
 }
 
 // GetDownloadInfo 获取下载信息
-func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
-	if s.Source != "soda" {
+func (s *Soda) GetDownloadInfo(song *model.Song) (*DownloadInfo, error) {
+	if song.Source != "soda" {
 		return nil, errors.New("source mismatch")
 	}
 
 	params := url.Values{}
-	params.Set("track_id", s.ID)
+	params.Set("track_id", song.ID)
 	params.Set("media_type", "track")
 
 	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
-	v2Body, err := utils.Get(v2URL, utils.WithHeader("User-Agent", UserAgent))
+	v2Body, err := utils.Get(v2URL, 
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", s.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +249,10 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 		return nil, errors.New("player info url not found")
 	}
 
-	infoBody, err := utils.Get(v2Resp.TrackPlayer.URLPlayerInfo, utils.WithHeader("User-Agent", UserAgent))
+	infoBody, err := utils.Get(v2Resp.TrackPlayer.URLPlayerInfo, 
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", s.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -268,8 +317,8 @@ func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) {
 }
 
 // GetDownloadURL 返回下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
-	info, err := GetDownloadInfo(s)
+func (s *Soda) GetDownloadURL(song *model.Song) (string, error) {
+	info, err := s.GetDownloadInfo(song)
 	if err != nil {
 		return "", err
 	}
@@ -277,8 +326,8 @@ func GetDownloadURL(s *model.Song) (string, error) {
 }
 
 // Download 下载并解密歌曲
-func Download(s *model.Song, outputPath string) error {
-	info, err := GetDownloadInfo(s)
+func (s *Soda) Download(song *model.Song, outputPath string) error {
+	info, err := s.GetDownloadInfo(song)
 	if err != nil {
 		return fmt.Errorf("get download info failed: %w", err)
 	}
@@ -555,17 +604,20 @@ func extractKey(playAuth string) (string, error) {
 }
 
 // GetLyrics 获取歌词
-func GetLyrics(s *model.Song) (string, error) {
-	if s.Source != "soda" {
+func (s *Soda) GetLyrics(song *model.Song) (string, error) {
+	if song.Source != "soda" {
 		return "", errors.New("source mismatch")
 	}
 
 	params := url.Values{}
-	params.Set("track_id", s.ID)
+	params.Set("track_id", song.ID)
 	params.Set("media_type", "track")
 
 	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
-	body, err := utils.Get(v2URL, utils.WithHeader("User-Agent", UserAgent))
+	body, err := utils.Get(v2URL, 
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", s.cookie),
+	)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch lyric API: %w", err)
 	}

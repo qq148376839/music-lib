@@ -19,9 +19,39 @@ const (
 	DownloadAPI = "http://music.163.com/weapi/song/enhance/player/url"
 )
 
+// Netease 结构体
+type Netease struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Netease {
+	return &Netease{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultNetease = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultNetease.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultNetease.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultNetease.GetLyrics(s)
+}
+
 // Search 搜索歌曲
 // Python: netease_search
-func Search(keyword string) ([]model.Song, error) {
+func (n *Netease) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造内部 eparams (将被 AES-ECB 加密)
 	eparams := map[string]interface{}{
 		"method": "POST",
@@ -49,6 +79,7 @@ func Search(keyword string) ([]model.Song, error) {
 	headers := []utils.RequestOption{
 		utils.WithHeader("Referer", Referer),
 		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
+		utils.WithHeader("Cookie", n.cookie),
 	}
 
 	body, err := utils.Post(SearchAPI, strings.NewReader(form.Encode()), headers...)
@@ -135,7 +166,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 // GetDownloadURL 获取下载链接
 // Python: NeteaseSong.download
-func GetDownloadURL(s *model.Song) (string, error) {
+func (n *Netease) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "netease" {
 		return "", errors.New("source mismatch")
 	}
@@ -162,6 +193,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	headers := []utils.RequestOption{
 		utils.WithHeader("Referer", Referer),
 		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
+		utils.WithHeader("Cookie", n.cookie),
 	}
 
 	body, err := utils.Post(DownloadAPI, strings.NewReader(form.Encode()), headers...)
@@ -190,7 +222,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 }
 
 // GetLyrics 获取歌词
-func GetLyrics(s *model.Song) (string, error) {
+func (n *Netease) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "netease" {
 		return "", errors.New("source mismatch")
 	}
@@ -220,6 +252,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	headers := []utils.RequestOption{
 		utils.WithHeader("Referer", Referer),
 		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
+		utils.WithHeader("Cookie", n.cookie),
 	}
 
 	// 接口地址

@@ -20,8 +20,38 @@ const (
 	MagicUserID = "15548614588710179085069"
 )
 
-// Search 搜索歌曲
+// Migu 结构体
+type Migu struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Migu {
+	return &Migu{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultMigu = New("")
+
+// Search 搜索歌曲（向后兼容）
 func Search(keyword string) ([]model.Song, error) {
+	return defaultMigu.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultMigu.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultMigu.GetLyrics(s)
+}
+
+// Search 搜索歌曲
+func (m *Migu) Search(keyword string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("ua", "Android_migu")
 	params.Set("version", "5.0.1")
@@ -35,6 +65,7 @@ func Search(keyword string) ([]model.Song, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Cookie", m.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -195,7 +226,7 @@ func Search(keyword string) ([]model.Song, error) {
 }
 
 // GetDownloadURL 获取下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
+func (m *Migu) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "migu" {
 		return "", errors.New("source mismatch")
 	}
@@ -234,6 +265,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	}
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", Referer)
+	req.Header.Set("Cookie", m.cookie)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -253,7 +285,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // 模仿 Python 逻辑，通过 ContentID 获取详情后下载歌词
-func GetLyrics(s *model.Song) (string, error) {
+func (m *Migu) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "migu" {
 		return "", errors.New("source mismatch")
 	}
@@ -275,6 +307,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Cookie", m.cookie),
 	)
 	if err != nil {
 		return "", err
@@ -314,6 +347,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	lrcBody, err := utils.Get(lyricUrl,
 		utils.WithHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"),
 		utils.WithHeader("Referer", "https://y.migu.cn/"),
+		utils.WithHeader("Cookie", m.cookie),
 	)
 	if err != nil {
 		return "", fmt.Errorf("download lyric failed: %w", err)

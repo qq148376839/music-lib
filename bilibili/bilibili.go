@@ -14,11 +14,40 @@ import (
 const (
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0"
 	Referer   = "https://www.bilibili.com/"
-	// 如果需要更高音质，请在此更新有效的 SESSDATA
-	Cookie    = "buvid3=2E109C72-251F-3827-FA8E-921FA0D7EC5291319infoc; SESSDATA=your_sessdata;"
 )
 
+// Bilibili 结构体
+type Bilibili struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Bilibili {
+	return &Bilibili{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultBilibili = New("buvid3=2E109C72-251F-3827-FA8E-921FA0D7EC5291319infoc; SESSDATA=your_sessdata;")
+
+// Search 搜索歌曲（向后兼容）
 func Search(keyword string) ([]model.Song, error) {
+	return defaultBilibili.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultBilibili.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultBilibili.GetLyrics(s)
+}
+
+// Search 搜索歌曲
+func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("search_type", "video")
 	params.Set("keyword", keyword)
@@ -26,7 +55,7 @@ func Search(keyword string) ([]model.Song, error) {
 	params.Set("page_size", "10")
 
 	searchURL := "https://api.bilibili.com/x/web-interface/search/type?" + params.Encode()
-	body, err := utils.Get(searchURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", Cookie))
+	body, err := utils.Get(searchURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", b.cookie))
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +80,7 @@ func Search(keyword string) ([]model.Song, error) {
 		rootTitle := strings.ReplaceAll(strings.ReplaceAll(item.Title, "<em class=\"keyword\">", ""), "</em>", "")
 
 		viewURL := fmt.Sprintf("https://api.bilibili.com/x/web-interface/view?bvid=%s", item.BVID)
-		viewBody, err := utils.Get(viewURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Cookie", Cookie))
+		viewBody, err := utils.Get(viewURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Cookie", b.cookie))
 		if err != nil {
 			continue
 		}
@@ -72,7 +101,7 @@ func Search(keyword string) ([]model.Song, error) {
 		for _, page := range viewResp.Data.Pages {
 			// [核心修改] 调用 PlayURL 获取带宽以计算 Size
 			playURL := fmt.Sprintf("https://api.bilibili.com/x/player/playurl?fnval=16&bvid=%s&cid=%d", item.BVID, page.CID)
-			playBody, err := utils.Get(playURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", Cookie))
+			playBody, err := utils.Get(playURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", b.cookie))
 			
 			var estimatedSize int64 = 0
 			actualDuration := page.Duration
@@ -133,14 +162,17 @@ func Search(keyword string) ([]model.Song, error) {
 	return songs, nil
 }
 
-// GetDownloadURL 保持之前的 Durl 兜底逻辑不变
-func GetDownloadURL(s *model.Song) (string, error) {
-	// ... (代码同上一版，包含 DASH 和 Durl 逻辑) ...
+// GetDownloadURL 获取下载链接
+func (b *Bilibili) GetDownloadURL(s *model.Song) (string, error) {
+	if s.Source != "bilibili" {
+		return "", errors.New("source mismatch")
+	}
+	
 	parts := strings.Split(s.ID, "|")
 	if len(parts) != 2 { return "", errors.New("invalid id") }
 	apiURL := fmt.Sprintf("https://api.bilibili.com/x/player/playurl?fnval=16&bvid=%s&cid=%s", parts[0], parts[1])
 
-	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", Cookie))
+	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Referer", Referer), utils.WithHeader("Cookie", b.cookie))
 	if err != nil { return "", err }
 
 	var resp struct {
@@ -169,7 +201,7 @@ type DashStream struct {
 }
 
 // GetLyrics 获取歌词 (B站暂不支持歌词接口)
-func GetLyrics(s *model.Song) (string, error) {
+func (b *Bilibili) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "bilibili" {
 		return "", errors.New("source mismatch")
 	}

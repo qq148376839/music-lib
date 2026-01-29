@@ -27,8 +27,38 @@ const (
 	LyricReferer = "https://y.qq.com/portal/player.html"
 )
 
-// Search 搜索歌曲
+// QQ 结构体
+type QQ struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *QQ {
+	return &QQ{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultQQ = New("")
+
+// Search 搜索歌曲（向后兼容）
 func Search(keyword string) ([]model.Song, error) {
+	return defaultQQ.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultQQ.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultQQ.GetLyrics(s)
+}
+
+// Search 搜索歌曲
+func (q *QQ) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造参数
 	params := url.Values{}
 	params.Set("w", keyword)
@@ -42,6 +72,7 @@ func Search(keyword string) ([]model.Song, error) {
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", SearchReferer),
+		utils.WithHeader("Cookie", q.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -123,7 +154,7 @@ func Search(keyword string) ([]model.Song, error) {
 }
 
 // GetDownloadURL 获取下载链接
-func GetDownloadURL(s *model.Song) (string, error) {
+func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "qq" {
 		return "", errors.New("source mismatch")
 	}
@@ -188,6 +219,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 			utils.WithHeader("User-Agent", UserAgent),
 			utils.WithHeader("Referer", DownloadReferer),
 			utils.WithHeader("Content-Type", "application/json"),
+			utils.WithHeader("Cookie", q.cookie),
 		}
 
 		body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(jsonData), headers...)
@@ -234,7 +266,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // Python: QQSong.download_lyrics
-func GetLyrics(s *model.Song) (string, error) {
+func (q *QQ) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "qq" {
 		return "", errors.New("source mismatch")
 	}
@@ -260,6 +292,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	headers := []utils.RequestOption{
 		utils.WithHeader("Referer", LyricReferer),
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", q.cookie),
 	}
 
 	body, err := utils.Get(apiURL, headers...)

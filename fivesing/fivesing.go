@@ -17,9 +17,39 @@ const (
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
+// Fivesing 结构体
+type Fivesing struct {
+	cookie string
+}
+
+// New 初始化函数
+func New(cookie string) *Fivesing {
+	return &Fivesing{
+		cookie: cookie,
+	}
+}
+
+// 全局默认实例（向后兼容）
+var defaultFivesing = New("")
+
+// Search 搜索歌曲（向后兼容）
+func Search(keyword string) ([]model.Song, error) {
+	return defaultFivesing.Search(keyword)
+}
+
+// GetDownloadURL 获取下载链接（向后兼容）
+func GetDownloadURL(s *model.Song) (string, error) {
+	return defaultFivesing.GetDownloadURL(s)
+}
+
+// GetLyrics 获取歌词（向后兼容）
+func GetLyrics(s *model.Song) (string, error) {
+	return defaultFivesing.GetLyrics(s)
+}
+
 // Search 搜索歌曲
 // 对应 Python: _search 方法前半部分
-func Search(keyword string) ([]model.Song, error) {
+func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 	// 1. 构造搜索参数
 	// Python: {'keyword': keyword, 'sort': 1, 'page': 1, 'filter': 0, 'type': 0}
 	params := url.Values{}
@@ -34,6 +64,7 @@ func Search(keyword string) ([]model.Song, error) {
 	// 2. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", f.cookie),
 	)
 	if err != nil {
 		return nil, err
@@ -88,7 +119,7 @@ func Search(keyword string) ([]model.Song, error) {
 
 // GetDownloadURL 获取下载链接
 // 对应 Python: _search 方法循环内部的 getSongUrl 调用部分
-func GetDownloadURL(s *model.Song) (string, error) {
+func (f *Fivesing) GetDownloadURL(s *model.Song) (string, error) {
 	if s.Source != "fivesing" {
 		return "", errors.New("source mismatch")
 	}
@@ -111,6 +142,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 	// 3. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", f.cookie),
 	)
 	if err != nil {
 		return "", err
@@ -153,7 +185,7 @@ func GetDownloadURL(s *model.Song) (string, error) {
 
 // GetLyrics 获取歌词
 // 对应 Python: http://mobileapi.5sing.kugou.com/song/newget
-func GetLyrics(s *model.Song) (string, error) {
+func (f *Fivesing) GetLyrics(s *model.Song) (string, error) {
 	if s.Source != "fivesing" {
 		return "", errors.New("source mismatch")
 	}
@@ -179,6 +211,7 @@ func GetLyrics(s *model.Song) (string, error) {
 	// 3. 发送请求
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", f.cookie),
 	)
 	if err != nil {
 		return "", err
