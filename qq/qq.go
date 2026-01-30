@@ -105,6 +105,7 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 			Size:     fileSize,
 			Bitrate:  bitrate,
 			Cover:    coverURL,
+			Link:     fmt.Sprintf("https://y.qq.com/n/ryqq/songDetail/%s", item.SongMID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"songmid": item.SongMID,

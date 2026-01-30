@@ -154,6 +154,7 @@ func (m *Migu) Search(keyword string) ([]model.Song, error) {
 			Bitrate:  bitrate,
 			Cover:    coverURL,
 			Ext:      bestInfo.ext, 
+			Link:     fmt.Sprintf("https://music.migu.cn/v3/music/song/%s", item.ContentID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"content_id":    item.ContentID,

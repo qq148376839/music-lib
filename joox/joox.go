@@ -97,6 +97,7 @@ func (j *Joox) Search(keyword string) ([]model.Song, error) {
 					Album:    info.AlbumName,
 					Duration: info.PlayDuration,
 					Cover:    cover,
+					Link:     fmt.Sprintf("https://www.joox.com/hk/single/%s", info.ID), // [新增]
 					// 核心修改：存入 Extra
 					Extra: map[string]string{
 						"songid": info.ID,

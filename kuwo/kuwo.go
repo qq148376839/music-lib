@@ -92,6 +92,7 @@ func (k *Kuwo) Search(keyword string) ([]model.Song, error) {
 			Size:     size,
 			Bitrate:  bitrate,
 			Cover:    item.HtsMVPic,
+			Link:     fmt.Sprintf("http://www.kuwo.cn/play_detail/%s", cleanID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"rid": cleanID,

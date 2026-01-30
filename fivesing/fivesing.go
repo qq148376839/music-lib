@@ -98,6 +98,9 @@ func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 			duration = int((item.SongSize * 8) / 320000)
 		}
 
+		// 构造 5sing 网页链接
+		link := fmt.Sprintf("http://5sing.kugou.com/%s/%d.html", item.TypeEname, item.SongID)
+
 		songs = append(songs, model.Song{
 			Source:   "fivesing",
 			ID:       compoundID,
@@ -107,6 +110,7 @@ func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 			Duration: duration,
 			Size:     item.SongSize,
 			Bitrate:  bitrate,
+			Link:     link, // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"songid":   strconv.FormatInt(item.SongID, 10),

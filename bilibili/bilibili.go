@@ -105,7 +105,7 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 			cover = "https:" + cover
 		}
 
-		for _, page := range viewResp.Data.Pages {
+		for i, page := range viewResp.Data.Pages {
 			displayTitle := page.Part
 			if len(viewResp.Data.Pages) == 1 && displayTitle == "" {
 				displayTitle = rootTitle
@@ -113,6 +113,9 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 				displayTitle = fmt.Sprintf("%s - %s", rootTitle, displayTitle)
 			}
 			
+			// 计算分页链接
+			pageLink := fmt.Sprintf("https://www.bilibili.com/video/%s?p=%d", item.BVID, i+1)
+
 			// 填充 Song 结构体
 			songs = append(songs, model.Song{
 				Source:   "bilibili",
@@ -124,6 +127,7 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 				Size:     0,
 				Bitrate:  0,
 				Cover:    cover,
+				Link:     pageLink, // [新增]
 				// 核心修改：将 bvid 和 cid 存入 Extra
 				Extra: map[string]string{
 					"bvid": item.BVID,

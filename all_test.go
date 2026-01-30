@@ -47,6 +47,10 @@ func TestKugouSearch(t *testing.T) {
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -107,6 +111,10 @@ func TestQQSearch(t *testing.T) {
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -165,6 +173,10 @@ func TestMiguSearch(t *testing.T) {
 		}
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
+		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
 		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
@@ -233,6 +245,10 @@ func TestNeteaseSearch(t *testing.T) {
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -291,6 +307,10 @@ func TestKuwoSearch(t *testing.T) {
 		}
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
+		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
 		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
@@ -353,6 +373,10 @@ func TestBilibiliSearch(t *testing.T) {
 		}
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
+		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
 		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
@@ -424,6 +448,10 @@ func TestFiveSingSearch(t *testing.T) {
 		if !strings.Contains(song.ID, "|") {
 			t.Errorf("Song %d: ID should contain '|' separator, got '%s'", i, song.ID)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -488,6 +516,10 @@ func TestQianqianSearch(t *testing.T) {
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -546,6 +578,10 @@ func TestSodaSearch(t *testing.T) {
 		}
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
+		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
 		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
@@ -606,6 +642,10 @@ func TestJamendoSearch(t *testing.T) {
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
 		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
+		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
 			t.Errorf("Song %d: Extra is nil", i)
@@ -664,6 +704,10 @@ func TestJooxSearch(t *testing.T) {
 		}
 		if song.ID == "" {
 			t.Errorf("Song %d: empty ID", i)
+		}
+		// [适配] 验证 Link
+		if song.Link == "" {
+			t.Errorf("Song %d: empty Link", i)
 		}
 		// [适配] 验证 Extra
 		if song.Extra == nil {
@@ -757,6 +801,10 @@ func TestAllSourcesSearch(t *testing.T) {
 			}
 			if song.ID == "" {
 				t.Errorf("%s: empty ID", src.name)
+			}
+			// [适配] 验证 Link
+			if song.Link == "" {
+				t.Errorf("%s: Link is empty", src.name)
 			}
 			// 通用 Extra 检查：确保所有源都正确初始化了 Extra
 			if song.Extra == nil {

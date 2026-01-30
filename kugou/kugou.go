@@ -106,6 +106,7 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 			Size:     size,
 			Bitrate:  bitrate,
 			Cover:    coverURL,
+			Link:     fmt.Sprintf("https://www.kugou.com/song/#hash=%s", finalHash), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"hash": finalHash,

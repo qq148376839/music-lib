@@ -16,15 +16,16 @@ type Song struct {
 	Duration int    `json:"duration"` // 秒
 	Size     int64  `json:"size"`     // 文件大小 (字节)
 	Bitrate  int    `json:"bitrate"`  // 码率 (kbps)
-	Source   string `json:"source"`   // kugou, netease, qq, bilibili
-	URL      string `json:"url"`      // 真实下载链接
+	Source   string `json:"source"`   // kugou, netease, qq, bilibili...
+	URL      string `json:"url"`      // 真实音频文件下载链接
 	Ext      string `json:"ext"`      // 文件后缀 (mp3, flac...)
 	Cover    string `json:"cover"`    // 封面图片链接
 
-	// 新增字段：用于存储源特有的元数据，避免解析 ID
-	// B站: bvid, cid
-	// 其他源: hash, media_mid 等
-	Extra map[string]string `json:"extra,omitempty"` 
+	// [新增] 歌曲原始链接 (例如网页地址)
+	Link string `json:"link"`
+
+	// 用于存储源特有的元数据，避免解析 ID
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 // FormatDuration 格式化时长 (e.g. 03:45)

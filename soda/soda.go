@@ -132,6 +132,7 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 			Size:     displaySize,
 			Bitrate:  bitrate,
 			Cover:    cover,
+			Link:     fmt.Sprintf("https://www.qishui.com/track/%s", track.ID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"track_id": track.ID,

@@ -97,6 +97,7 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 			Ext:      ext,
 			Cover:    item.Cover.Big.Size300,
 			URL:      downloadURL,
+			Link:     fmt.Sprintf("https://www.jamendo.com/track/%d", item.ID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"track_id": strconv.Itoa(item.ID),

@@ -105,6 +105,7 @@ func (q *Qianqian) Search(keyword string) ([]model.Song, error) {
 			Size:     size,
 			Bitrate:  bitrate,
 			Cover:    item.Pic,
+			Link:     fmt.Sprintf("https://music.91q.com/song/%s", item.TSID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"tsid": item.TSID,

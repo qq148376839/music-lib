@@ -97,6 +97,7 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 			Size:     size,
 			Bitrate:  bitrate,
 			Cover:    item.Al.PicURL,
+			Link:     fmt.Sprintf("https://music.163.com/#/song?id=%d", item.ID), // [新增]
 			// 核心修改：存入 Extra
 			Extra: map[string]string{
 				"song_id": strconv.Itoa(item.ID),
