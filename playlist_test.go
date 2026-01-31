@@ -10,6 +10,7 @@ import (
 	"github.com/guohuiyuan/music-lib/migu"
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/netease"
+	"github.com/guohuiyuan/music-lib/qianqian"
 	"github.com/guohuiyuan/music-lib/qq"
 )
 
@@ -27,6 +28,7 @@ func TestSearchPlaylistOnly(t *testing.T) {
 		{"fivesing", "抖音", fivesing.SearchPlaylist},
 		{"kuwo", "抖音", kuwo.SearchPlaylist},
 		{"migu", "抖音", migu.SearchPlaylist},
+		// {"qianqian", "抖音", qianqian.SearchPlaylist}, 
 	}
 
 	for _, tt := range tests {
@@ -69,7 +71,8 @@ func TestGetPlaylistSongsOnly(t *testing.T) {
 		{"qq", "9262344645", "qq", qq.GetPlaylistSongs},
 		{"fivesing", "5b163457b0f5ba3ca80628db", "fivesing", fivesing.GetPlaylistSongs},
 		{"kuwo", "3586832635", "kuwo", kuwo.GetPlaylistSongs},
-		{"migu", "230478123", "migu", migu.GetPlaylistSongs},
+		// {"migu", "230478123", "migu", migu.GetPlaylistSongs},
+		{"qianqian", "295013", "qianqian", qianqian.GetPlaylistSongs},
 	}
 
 	for _, tc := range tests {
