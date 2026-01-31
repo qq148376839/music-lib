@@ -16,13 +16,18 @@ import (
 )
 
 const (
-	UserAgent     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-	Referer       = "https://www.jamendo.com/search?q=musicdl"
-	XJamVersion   = "4gvfvv"
-	SearchAPI     = "https://www.jamendo.com/api/search"
-	SearchApiPath = "/api/search" 
-	TrackAPI      = "https://www.jamendo.com/api/tracks" 
-	TrackApiPath  = "/api/tracks" 
+	UserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+	Referer           = "https://www.jamendo.com/search?q=musicdl"
+	XJamVersion       = "4gvfvv"
+	SearchAPI         = "https://www.jamendo.com/api/search"
+	SearchApiPath     = "/api/search" 
+	TrackAPI          = "https://www.jamendo.com/api/tracks" 
+	TrackApiPath      = "/api/tracks" 
+	PlaylistAPI       = "https://www.jamendo.com/api/playlists"
+	PlaylistApiPath   = "/api/playlists"
+	PlaylistTracksAPI = "https://www.jamendo.com/api/playlists/tracks"
+	PlaylistTracksPath= "/api/playlists/tracks"
+	ClientID = "9873ff31"
 )
 
 type Jamendo struct {
@@ -36,6 +41,8 @@ func New(cookie string) *Jamendo {
 var defaultJamendo = New("")
 
 func Search(keyword string) ([]model.Song, error) { return defaultJamendo.Search(keyword) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultJamendo.SearchPlaylist(keyword) } // [新增]
+func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultJamendo.GetPlaylistSongs(id) }       // [新增]
 func GetDownloadURL(s *model.Song) (string, error) { return defaultJamendo.GetDownloadURL(s) }
 func GetLyrics(s *model.Song) (string, error) { return defaultJamendo.GetLyrics(s) }
 func Parse(link string) (*model.Song, error) { return defaultJamendo.Parse(link) }
@@ -98,6 +105,135 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 			Link:     fmt.Sprintf("https://www.jamendo.com/track/%d", item.ID),
 			Extra: map[string]string{
 				"track_id": strconv.Itoa(item.ID),
+			},
+		})
+	}
+	return songs, nil
+}
+// SearchPlaylist 搜索歌单
+func (j *Jamendo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	params := url.Values{}
+	params.Set("namesearch", keyword)
+	params.Set("v", "3.0")
+	params.Set("format", "json")
+	params.Set("client_id", ClientID)
+	params.Set("limit", "10")
+	params.Set("order", "creationdate_desc")
+
+	// 使用 v3.0 公共 API
+	apiURL := "https://api.jamendo.com/v3.0/playlists/?" + params.Encode()
+
+	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Headers struct {
+			Status string `json:"status"`
+			Code   int    `json:"code"`
+		} `json:"headers"`
+		Results []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			Creation  string `json:"creationdate"`
+			UserID    string `json:"user_id"`
+			UserName  string `json:"user_name"`
+			ShareURL  string `json:"shareurl"`
+			// Jamendo 歌单搜索列表不直接返回封面，需后续处理或用默认图
+		} `json:"results"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("jamendo playlist json parse error: %w", err)
+	}
+
+	if resp.Headers.Status != "success" {
+		return nil, fmt.Errorf("jamendo api error: %s", resp.Headers.Status)
+	}
+
+	var playlists []model.Playlist
+	for _, item := range resp.Results {
+		playlists = append(playlists, model.Playlist{
+			Source:      "jamendo",
+			ID:          item.ID,
+			Name:        item.Name,
+			Creator:     item.UserName,
+			Description: fmt.Sprintf("Created: %s", item.Creation),
+			// Jamendo 歌单列表 API 不返回封面，留空或使用占位
+			Cover:       "", 
+			TrackCount:  0, // 列表接口未返回歌曲数
+		})
+	}
+	return playlists, nil
+}
+
+// GetPlaylistSongs 获取歌单详情
+func (j *Jamendo) GetPlaylistSongs(id string) ([]model.Song, error) {
+	params := url.Values{}
+	params.Set("id", id)
+	params.Set("v", "3.0")
+	params.Set("format", "json")
+	params.Set("client_id", ClientID)
+	params.Set("limit", "100") // 获取前100首
+
+	// 注意：这里用的是 /playlists/tracks 接口
+	apiURL := "https://api.jamendo.com/v3.0/playlists/tracks?" + params.Encode()
+
+	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Headers struct {
+			Status string `json:"status"`
+		} `json:"headers"`
+		Results []struct {
+			ID     string `json:"id"` // 歌单 ID
+			Tracks []struct {
+				ID       string `json:"id"`
+				Name     string `json:"name"`
+				Duration string `json:"duration"` // Jamendo v3 返回的是字符串秒数
+				Artist   string `json:"artist_name"`
+				Album    string `json:"album_name"`
+				Image    string `json:"image"`    // 封面
+				Audio    string `json:"audio"`    // 试听链接 (通常也就是下载链接)
+				Audiodl  string `json:"audiodl"`  // 强制下载链接
+			} `json:"tracks"`
+		} `json:"results"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("jamendo playlist tracks json error: %w", err)
+	}
+
+	if len(resp.Results) == 0 || len(resp.Results[0].Tracks) == 0 {
+		return nil, errors.New("playlist is empty or invalid")
+	}
+
+	var songs []model.Song
+	for _, item := range resp.Results[0].Tracks {
+		dur, _ := strconv.Atoi(item.Duration)
+		
+		// 优先使用 audio 字段 (mp3流)
+		url := item.Audio
+		if url == "" {
+			url = item.Audiodl
+		}
+
+		songs = append(songs, model.Song{
+			Source:   "jamendo",
+			ID:       item.ID,
+			Name:     item.Name,
+			Artist:   item.Artist,
+			Album:    item.Album,
+			Duration: dur,
+			Cover:    item.Image,
+			URL:      url, // Jamendo 接口直接返回播放链接，可直接赋值
+			Link:     fmt.Sprintf("https://www.jamendo.com/track/%s", item.ID),
+			Extra: map[string]string{
+				"track_id": item.ID,
 			},
 		})
 	}

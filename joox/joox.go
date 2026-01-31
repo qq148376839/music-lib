@@ -33,9 +33,13 @@ func New(cookie string) *Joox {
 var defaultJoox = New(Cookie)
 
 func Search(keyword string) ([]model.Song, error) { return defaultJoox.Search(keyword) }
-func GetDownloadURL(s *model.Song) (string, error) { return defaultJoox.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error) { return defaultJoox.GetLyrics(s) }
-func Parse(link string) (*model.Song, error) { return defaultJoox.Parse(link) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	return defaultJoox.SearchPlaylist(keyword)
+}                                                      // [新增]
+func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultJoox.GetPlaylistSongs(id) } // [新增]
+func GetDownloadURL(s *model.Song) (string, error)     { return defaultJoox.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)          { return defaultJoox.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)           { return defaultJoox.Parse(link) }
 
 // Search 搜索歌曲
 func (j *Joox) Search(keyword string) ([]model.Song, error) {
@@ -59,13 +63,18 @@ func (j *Joox) Search(keyword string) ([]model.Song, error) {
 			ItemList []struct {
 				Song []struct {
 					SongInfo struct {
-						ID           string `json:"id"`
-						Name         string `json:"name"`
-						AlbumName    string `json:"album_name"`
-						ArtistList   []struct{ Name string `json:"name"` } `json:"artist_list"`
+						ID         string `json:"id"`
+						Name       string `json:"name"`
+						AlbumName  string `json:"album_name"`
+						ArtistList []struct {
+							Name string `json:"name"`
+						} `json:"artist_list"`
 						PlayDuration int `json:"play_duration"`
-						Images       []struct{ Width int `json:"width"`; URL string `json:"url"` } `json:"images"`
-						VipFlag      int `json:"vip_flag"`
+						Images       []struct {
+							Width int    `json:"width"`
+							URL   string `json:"url"`
+						} `json:"images"`
+						VipFlag int `json:"vip_flag"`
 					} `json:"song_info"`
 				} `json:"song"`
 			} `json:"item_list"`
@@ -115,6 +124,154 @@ func (j *Joox) Search(keyword string) ([]model.Song, error) {
 				})
 			}
 		}
+	}
+	return songs, nil
+}
+
+// SearchPlaylist 搜索歌单
+func (j *Joox) SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	params := url.Values{}
+	params.Set("country", "hk")
+	params.Set("lang", "zh_cn")
+	params.Set("search_input", keyword)
+	params.Set("sin", "0")
+	params.Set("ein", "10")
+	params.Set("type", "3") // type 3 代表歌单 (playlist)
+
+	apiURL := "http://api.joox.com/web-fcgi-bin/kugou_search?" + params.Encode()
+
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", j.cookie),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Joox API 经常返回非标准 JSON，例如 {itemlist:[...]} 而没有引号
+	// 或者返回 Base64 编码的 data。
+	// 但 kugou_search 这个旧接口通常返回标准 JSON。
+	var resp struct {
+		Items []struct {
+			PlayListID   string `json:"playlist_id"`
+			PlayListName string `json:"playlist_name"`
+			Intro        string `json:"intro"`
+			Cover        string `json:"cover_url"`
+			TrackCount   int    `json:"track_count"`
+			CreatorName  string `json:"creator_name"`
+		} `json:"itemlist"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		// 备选方案：如果返回的是 jsonp，去除 callback
+		s := string(body)
+		if idx := strings.Index(s, "("); idx > -1 {
+			s = strings.TrimSuffix(strings.TrimPrefix(s[idx+1:], ""), ")")
+			if err2 := json.Unmarshal([]byte(s), &resp); err2 != nil {
+				return nil, fmt.Errorf("joox playlist json parse error: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("joox playlist json parse error: %w", err)
+		}
+	}
+
+	var playlists []model.Playlist
+	for _, item := range resp.Items {
+		// Base64 解码歌名等 (Joox 有时会 Base64 编码字段)
+		// 但这个接口通常是明文。如果发现乱码，需要在这里 base64 decode item.PlayListName
+
+		playlists = append(playlists, model.Playlist{
+			Source:      "joox",
+			ID:          item.PlayListID,
+			Name:        item.PlayListName,
+			Cover:       item.Cover,
+			TrackCount:  item.TrackCount,
+			Creator:     item.CreatorName,
+			Description: item.Intro,
+		})
+	}
+	return playlists, nil
+}
+
+// GetPlaylistSongs 获取歌单详情
+func (j *Joox) GetPlaylistSongs(id string) ([]model.Song, error) {
+	params := url.Values{}
+	params.Set("playlistid", id)
+	params.Set("country", "hk")
+	params.Set("lang", "zh_cn")
+	params.Set("from_type", "-1")
+
+	apiURL := "http://api.joox.com/web-fcgi-bin/nk_get_playlist_details?" + params.Encode()
+
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", j.cookie),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 同样的，可能是 JSONP 格式
+	s := string(body)
+	if strings.HasPrefix(s, "updatePlaylistDetail") {
+		start := strings.Index(s, "(")
+		end := strings.LastIndex(s, ")")
+		if start != -1 && end != -1 {
+			s = s[start+1 : end]
+		}
+	}
+
+	// 定义响应结构
+	var resp struct {
+		Name   string `json:"name"`
+		Tracks []struct {
+			ID         string `json:"songid"`
+			Name       string `json:"songname"`
+			AlbumName  string `json:"albumname"`
+			ArtistList []struct {
+				Name string `json:"name"`
+			} `json:"artist_list"`
+			AlbumID    string `json:"albumid"`
+			Duration   int    `json:"playtime"`  // 秒
+			AlbumCover string `json:"album_url"` // 有时为空
+		} `json:"tracks"`
+	}
+
+	if err := json.Unmarshal([]byte(s), &resp); err != nil {
+		return nil, fmt.Errorf("joox playlist detail json error: %w", err)
+	}
+
+	if len(resp.Tracks) == 0 {
+		return nil, errors.New("playlist is empty or invalid")
+	}
+
+	var songs []model.Song
+	for _, item := range resp.Tracks {
+		var artists []string
+		for _, a := range item.ArtistList {
+			artists = append(artists, a.Name)
+		}
+
+		// 封面处理
+		cover := item.AlbumCover
+		if cover == "" && item.AlbumID != "0" {
+			cover = fmt.Sprintf("https://img.jooxcdn.com/album/%s/%s/%s.jpg",
+				item.AlbumID[len(item.AlbumID)-2:], item.AlbumID[len(item.AlbumID)-1:], item.AlbumID)
+		}
+
+		songs = append(songs, model.Song{
+			Source:   "joox",
+			ID:       item.ID,
+			Name:     item.Name,
+			Artist:   strings.Join(artists, "、"),
+			Album:    item.AlbumName,
+			Duration: item.Duration,
+			Cover:    cover,
+			Link:     fmt.Sprintf("https://www.joox.com/hk/single/%s", item.ID),
+			Extra: map[string]string{
+				"songid": item.ID,
+			},
+		})
 	}
 	return songs, nil
 }
