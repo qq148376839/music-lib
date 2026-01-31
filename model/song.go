@@ -28,7 +28,7 @@ type Song struct {
 	Extra map[string]string `json:"extra,omitempty"`
 }
 
-// Playlist 是所有音乐源通用的歌单结构 [新增]
+// Playlist 是所有音乐源通用的歌单结构 [修改]
 type Playlist struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -38,6 +38,9 @@ type Playlist struct {
 	Creator     string `json:"creator"`
 	Description string `json:"description"`
 	Source      string `json:"source"`
+
+	// [新增] 用于存储源特有的元数据，避免在 ID 中拼接字符串
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 // FormatDuration 格式化时长 (e.g. 03:45)
