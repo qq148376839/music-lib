@@ -24,13 +24,17 @@ type Kugou struct {
 }
 
 func New(cookie string) *Kugou { return &Kugou{cookie: cookie} }
+
 var defaultKugou = New("")
+
 func Search(keyword string) ([]model.Song, error) { return defaultKugou.Search(keyword) }
-func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultKugou.SearchPlaylist(keyword) } // [新增]
-func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultKugou.GetPlaylistSongs(id) }       // [新增]
-func GetDownloadURL(s *model.Song) (string, error) { return defaultKugou.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error) { return defaultKugou.GetLyrics(s) }
-func Parse(link string) (*model.Song, error) { return defaultKugou.Parse(link) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	return defaultKugou.SearchPlaylist(keyword)
+}                                                      // [新增]
+func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultKugou.GetPlaylistSongs(id) } // [新增]
+func GetDownloadURL(s *model.Song) (string, error)     { return defaultKugou.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)          { return defaultKugou.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)           { return defaultKugou.Parse(link) }
 
 // Search 搜索歌曲
 func (k *Kugou) Search(keyword string) ([]model.Song, error) {
@@ -47,7 +51,9 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		Data struct {
@@ -74,8 +80,12 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 
 	var songs []model.Song
 	for _, item := range resp.Data.Lists {
-		if item.Privilege == 10 { continue }
-		if item.FileHash == "" && item.SQFileHash == "" && item.HQFileHash == "" { continue }
+		if item.Privilege == 10 {
+			continue
+		}
+		if item.FileHash == "" && item.SQFileHash == "" && item.HQFileHash == "" {
+			continue
+		}
 
 		finalHash := item.FileHash
 		if isValidHash(item.SQFileHash) {
@@ -86,10 +96,14 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 
 		var size int64
 		switch v := item.FileSize.(type) {
-		case float64: size = int64(v)
-		case int: size = int64(v)
+		case float64:
+			size = int64(v)
+		case int:
+			size = int64(v)
 		case string:
-			if i, err := strconv.ParseInt(v, 10, 64); err == nil { size = i }
+			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+				size = i
+			}
 		}
 
 		bitrate := 0
@@ -126,7 +140,7 @@ func (k *Kugou) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params.Set("format", "json")
 	params.Set("page", "1")
 	params.Set("pagesize", "10")
-	params.Set("filter", "0") 
+	params.Set("filter", "0")
 	// 注意：酷狗的 special_search 接口与 song_search 略有不同，
 	// 这里使用 mobilecdn 接口，它通常更稳定且结构简单。
 	apiURL := "http://mobilecdn.kugou.com/api/v3/search/special?" + params.Encode()
@@ -135,7 +149,9 @@ func (k *Kugou) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		Data struct {
@@ -144,10 +160,10 @@ func (k *Kugou) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 				SpecialName string `json:"specialname"`
 				Intro       string `json:"intro"`
 				ImgURL      string `json:"imgurl"`
-				SongCount   int    `json:"song_count"`
-				PlayCount   int    `json:"play_count"`
+				SongCount   int    `json:"songcount"`
+				PlayCount   int    `json:"playcount"`
 				NickName    string `json:"nickname"`
-				PubTime     string `json:"pub_time"`
+				PubTime     string `json:"publishtime"`
 			} `json:"info"`
 		} `json:"data"`
 	}
@@ -183,7 +199,9 @@ func (k *Kugou) GetPlaylistSongs(id string) ([]model.Song, error) {
 		utils.WithHeader("User-Agent", MobileUserAgent),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		Data struct {
@@ -253,7 +271,9 @@ func (k *Kugou) Parse(link string) (*model.Song, error) {
 
 // GetDownloadURL 获取下载链接
 func (k *Kugou) GetDownloadURL(s *model.Song) (string, error) {
-	if s.Source != "kugou" { return "", errors.New("source mismatch") }
+	if s.Source != "kugou" {
+		return "", errors.New("source mismatch")
+	}
 	if s.URL != "" {
 		return s.URL, nil
 	}
@@ -283,7 +303,9 @@ func (k *Kugou) fetchSongInfo(hash string) (*model.Song, error) {
 		utils.WithHeader("Referer", MobileReferer),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		URL        string      `json:"url"`
@@ -328,7 +350,9 @@ func (k *Kugou) fetchSongInfo(hash string) (*model.Song, error) {
 
 // GetLyrics 获取歌词
 func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
-	if s.Source != "kugou" { return "", errors.New("source mismatch") }
+	if s.Source != "kugou" {
+		return "", errors.New("source mismatch")
+	}
 
 	hash := s.ID
 	if s.Extra != nil && s.Extra["hash"] != "" {
@@ -342,7 +366,9 @@ func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
 		utils.WithHeader("Referer", MobileReferer),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 
 	var searchResp struct {
 		Status     int `json:"status"`
@@ -357,7 +383,9 @@ func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
 		return "", fmt.Errorf("search lyrics json parse error: %w", err)
 	}
 
-	if len(searchResp.Candidates) == 0 { return "", errors.New("lyrics not found") }
+	if len(searchResp.Candidates) == 0 {
+		return "", errors.New("lyrics not found")
+	}
 
 	candidate := searchResp.Candidates[0]
 	downloadURL := fmt.Sprintf("http://lyrics.kugou.com/download?ver=1&client=pc&id=%v&accesskey=%s&fmt=lrc&charset=utf8", candidate.ID, candidate.AccessKey)
@@ -367,7 +395,9 @@ func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
 		utils.WithHeader("Referer", MobileReferer),
 		utils.WithHeader("Cookie", k.cookie),
 	)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 
 	var downloadResp struct {
 		Status  int    `json:"status"`
@@ -377,10 +407,14 @@ func (k *Kugou) GetLyrics(s *model.Song) (string, error) {
 	if err := json.Unmarshal(lrcBody, &downloadResp); err != nil {
 		return "", fmt.Errorf("download lyrics json parse error: %w", err)
 	}
-	if downloadResp.Content == "" { return "", errors.New("lyrics content is empty") }
+	if downloadResp.Content == "" {
+		return "", errors.New("lyrics content is empty")
+	}
 
 	decodedBytes, err := base64.StdEncoding.DecodeString(downloadResp.Content)
-	if err != nil { return "", fmt.Errorf("base64 decode error: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
 
 	return string(decodedBytes), nil
 }

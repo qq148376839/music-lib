@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -28,11 +29,17 @@ type QQ struct {
 }
 
 func New(cookie string) *QQ { return &QQ{cookie: cookie} }
+
 var defaultQQ = New("")
+
 func Search(keyword string) ([]model.Song, error) { return defaultQQ.Search(keyword) }
-func GetDownloadURL(s *model.Song) (string, error) { return defaultQQ.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error) { return defaultQQ.GetLyrics(s) }
-func Parse(link string) (*model.Song, error) { return defaultQQ.Parse(link) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	return defaultQQ.SearchPlaylist(keyword)
+}                                                      // [新增]
+func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultQQ.GetPlaylistSongs(id) } // [新增]
+func GetDownloadURL(s *model.Song) (string, error)     { return defaultQQ.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)          { return defaultQQ.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)           { return defaultQQ.Parse(link) }
 
 // Search 搜索歌曲
 func (q *QQ) Search(keyword string) ([]model.Song, error) {
@@ -48,7 +55,9 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 		utils.WithHeader("Referer", SearchReferer),
 		utils.WithHeader("Cookie", q.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		Data struct {
@@ -63,8 +72,10 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 					Size128   int64  `json:"size128"`
 					Size320   int64  `json:"size320"`
 					SizeFlac  int64  `json:"sizeflac"`
-					Singer    []struct{ Name string `json:"name"` } `json:"singer"`
-					Pay       struct {
+					Singer    []struct {
+						Name string `json:"name"`
+					} `json:"singer"`
+					Pay struct {
 						PayDownload   int `json:"paydownload"`
 						PayPlay       int `json:"payplay"`
 						PayTrackPrice int `json:"paytrackprice"`
@@ -80,10 +91,14 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 
 	var songs []model.Song
 	for _, item := range resp.Data.Song.List {
-		if item.Pay.PayPlay == 1 { continue }
+		if item.Pay.PayPlay == 1 {
+			continue
+		}
 
 		var artistNames []string
-		for _, s := range item.Singer { artistNames = append(artistNames, s.Name) }
+		for _, s := range item.Singer {
+			artistNames = append(artistNames, s.Name)
+		}
 
 		var coverURL string
 		if item.AlbumMID != "" {
@@ -94,9 +109,225 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 		bitrate := 128
 		if item.SizeFlac > 0 {
 			fileSize = item.SizeFlac
-			if item.Interval > 0 { bitrate = int(fileSize * 8 / 1000 / int64(item.Interval)) } else { bitrate = 800 }
+			if item.Interval > 0 {
+				bitrate = int(fileSize * 8 / 1000 / int64(item.Interval))
+			} else {
+				bitrate = 800
+			}
 		} else if item.Size320 > 0 {
-			fileSize = item.Size320; bitrate = 320
+			fileSize = item.Size320
+			bitrate = 320
+		}
+
+		songs = append(songs, model.Song{
+			Source:   "qq",
+			ID:       item.SongMID,
+			Name:     item.SongName,
+			Artist:   strings.Join(artistNames, "、"),
+			Album:    item.AlbumName,
+			Duration: item.Interval,
+			Size:     fileSize,
+			Bitrate:  bitrate,
+			Cover:    coverURL,
+			Link:     fmt.Sprintf("https://y.qq.com/n/ryqq/songDetail/%s", item.SongMID),
+			Extra: map[string]string{
+				"songmid": item.SongMID,
+			},
+		})
+	}
+	return songs, nil
+}
+
+// SearchPlaylist 搜索歌单 (使用专用歌单搜索接口 client_music_search_songlist)
+func (q *QQ) SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	params := url.Values{}
+	params.Set("query", keyword)
+	params.Set("page_no", "0") // 注意：这个接口页码从 0 开始
+	params.Set("num_per_page", "20")
+	params.Set("format", "json") // 强制 JSON，避免 JSONP
+	params.Set("remoteplace", "txt.yqq.playlist")
+	params.Set("flag_qc", "0")
+
+	// 这是一个专门用于搜索歌单的 GET 接口，比通用的 musicu.fcg 更容易拿数据
+	apiURL := "http://c.y.qq.com/soso/fcgi-bin/client_music_search_songlist?" + params.Encode()
+
+	body, err := utils.Get(apiURL,
+		//即使没有 Cookie，这个 User-Agent 和 Referer 组合通常也能工作
+		utils.WithHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"),
+		utils.WithHeader("Referer", "https://y.qq.com/portal/search.html"),
+		utils.WithHeader("Cookie", q.cookie),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			List []struct {
+				DissID    string `json:"dissid"`
+				DissName  string `json:"dissname"`
+				ImgUrl    string `json:"imgurl"`
+				SongCount int    `json:"song_count"`
+				ListenNum int    `json:"listennum"`
+				Creator   struct {
+					Name string `json:"name"`
+				} `json:"creator"`
+			} `json:"list"`
+			Sum int `json:"sum"` // 搜索结果总数
+		} `json:"data"`
+		Message string `json:"message"`
+	}
+
+	// 尝试解析
+	if err := json.Unmarshal(body, &resp); err != nil {
+		// 容错处理：有时接口会返回 invalid character ... 可能是 JSONP 格式残留
+		// 如果 json 解析失败，尝试去除首尾可能存在的 callback(...)
+		sBody := string(body)
+		if idx := strings.Index(sBody, "("); idx >= 0 {
+			sBody = sBody[idx+1:]
+			if idx2 := strings.LastIndex(sBody, ")"); idx2 >= 0 {
+				sBody = sBody[:idx2]
+				_ = json.Unmarshal([]byte(sBody), &resp)
+			}
+		} else {
+			return nil, fmt.Errorf("qq playlist special json parse error: %w", err)
+		}
+	}
+
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("qq api error: %s (code %d)", resp.Message, resp.Code)
+	}
+
+	var playlists []model.Playlist
+	for _, item := range resp.Data.List {
+		cover := item.ImgUrl
+		if cover != "" {
+			// 协议修复
+			if strings.HasPrefix(cover, "http://") {
+				cover = strings.Replace(cover, "http://", "https://", 1)
+			}
+			// 尝试获取大图：将 /0 结尾替换为 /300 或 /600
+			// cover = strings.TrimSuffix(cover, "/0") + "/300"
+		}
+
+		playlists = append(playlists, model.Playlist{
+			Source:     "qq",
+			ID:         item.DissID,
+			Name:       item.DissName,
+			Cover:      cover,
+			TrackCount: item.SongCount,
+			PlayCount:  item.ListenNum,
+			Creator:    item.Creator.Name,
+		})
+	}
+
+	if len(playlists) == 0 {
+		return nil, errors.New("no playlists found")
+	}
+
+	return playlists, nil
+}
+
+// GetPlaylistSongs 获取歌单详情（解析歌曲列表）
+func (q *QQ) GetPlaylistSongs(id string) ([]model.Song, error) {
+	params := url.Values{}
+	params.Set("type", "1")
+	params.Set("json", "1")
+	params.Set("utf8", "1")
+	params.Set("onlysong", "0")
+	params.Set("disstid", id)
+	params.Set("format", "json")
+	// 添加 g_tk 参数（虽然可能不是必须的，但某些情况下需要）
+	params.Set("g_tk", "5381")
+	params.Set("loginUin", "0")
+	params.Set("hostUin", "0")
+	params.Set("inCharset", "utf8")
+	params.Set("outCharset", "utf-8")
+	params.Set("notice", "0")
+	params.Set("platform", "yqq")
+	params.Set("needNewCode", "0")
+
+	apiURL := "http://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?" + params.Encode()
+
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
+		// 关键修改：使用 PC 端 Referer，不是移动端 m.y.qq.com
+		utils.WithHeader("Referer", "https://y.qq.com/"),
+		utils.WithHeader("Cookie", q.cookie),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 处理 JSONP 包装（此接口常返回 callback(...)）
+	sBody := string(body)
+	if idx := strings.Index(sBody, "("); idx >= 0 && strings.HasSuffix(strings.TrimSpace(sBody), ")") {
+		sBody = sBody[idx+1 : len(sBody)-1]
+		body = []byte(sBody)
+	}
+
+	var resp struct {
+		Cdlist []struct {
+			Dissname string `json:"dissname"` // 歌单名称，可用于验证
+			Songlist []struct {
+				SongID    int64  `json:"songid"`
+				SongName  string `json:"songname"`
+				SongMID   string `json:"songmid"`
+				AlbumName string `json:"albumname"`
+				AlbumMID  string `json:"albummid"`
+				Interval  int    `json:"interval"`
+				Size128   int64  `json:"size128"`
+				Size320   int64  `json:"size320"`
+				SizeFlac  int64  `json:"sizeflac"`
+				Pay       struct {
+					PayPlay int `json:"payplay"`
+				} `json:"pay"`
+				Singer []struct {
+					Name string `json:"name"`
+				} `json:"singer"`
+			} `json:"songlist"`
+		} `json:"cdlist"`
+	}
+
+	os.WriteFile(fmt.Sprintf("qq_playlist_%s.json", id), body, 0644)
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("qq playlist detail json error: %w", err)
+	}
+
+	if len(resp.Cdlist) == 0 {
+		return nil, errors.New("playlist not found (empty cdlist)")
+	}
+
+	var songs []model.Song
+	for _, item := range resp.Cdlist[0].Songlist {
+		// 跳过付费歌曲
+		if item.Pay.PayPlay == 1 {
+			continue
+		}
+
+		var artistNames []string
+		for _, s := range item.Singer {
+			artistNames = append(artistNames, s.Name)
+		}
+
+		var coverURL string
+		if item.AlbumMID != "" {
+			coverURL = fmt.Sprintf("https://y.gtimg.cn/music/photo_new/T002R300x300M000%s.jpg", item.AlbumMID)
+		}
+
+		fileSize := item.Size128
+		bitrate := 128
+		if item.SizeFlac > 0 {
+			fileSize = item.SizeFlac
+			if item.Interval > 0 {
+				bitrate = int(fileSize * 8 / 1000 / int64(item.Interval))
+			} else {
+				bitrate = 800
+			}
+		} else if item.Size320 > 0 {
+			fileSize = item.Size320
+			bitrate = 320
 		}
 
 		songs = append(songs, model.Song{
@@ -140,13 +371,15 @@ func (q *QQ) Parse(link string) (*model.Song, error) {
 	if err == nil {
 		song.URL = downloadURL
 	}
-	
+
 	return song, nil
 }
 
 // GetDownloadURL 获取下载链接
 func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
-	if s.Source != "qq" { return "", errors.New("source mismatch") }
+	if s.Source != "qq" {
+		return "", errors.New("source mismatch")
+	}
 
 	songMID := s.ID
 	if s.Extra != nil && s.Extra["songmid"] != "" {
@@ -155,16 +388,19 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	guid := fmt.Sprintf("%d", r.Int63n(9000000000)+1000000000)
-	type Rate struct { Prefix string; Ext string }
-	rates := []Rate{ {"M500", "mp3"}, {"C400", "m4a"} }
+	type Rate struct {
+		Prefix string
+		Ext    string
+	}
+	rates := []Rate{{"M500", "mp3"}, {"C400", "m4a"}}
 	var lastErr string
 
 	for _, rate := range rates {
 		filename := fmt.Sprintf("%s%s%s.%s", rate.Prefix, songMID, songMID, rate.Ext)
 
 		reqData := map[string]interface{}{
-			"comm": map[string]interface{}{ "cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": 0, "g_tk_new_20200303": 5381, "g_tk": 5381 },
-			"req_1": map[string]interface{}{ "module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{ "guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": "0", "loginflag": 1, "platform": "20", "filename": []string{filename} } },
+			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": 0, "g_tk_new_20200303": 5381, "g_tk": 5381},
+			"req_1": map[string]interface{}{"module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{"guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": "0", "loginflag": 1, "platform": "20", "filename": []string{filename}}},
 		}
 
 		jsonData, _ := json.Marshal(reqData)
@@ -176,20 +412,34 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		}
 
 		body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(jsonData), headers...)
-		if err != nil { lastErr = err.Error(); continue }
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
 
 		var result struct {
 			Req1 struct {
 				Data struct {
-					MidUrlInfo []struct { Purl string `json:"purl"`; WifiUrl string `json:"wifiurl"`; Result int `json:"result"`; ErrMsg string `json:"errtype"` } `json:"midurlinfo"`
+					MidUrlInfo []struct {
+						Purl    string `json:"purl"`
+						WifiUrl string `json:"wifiurl"`
+						Result  int    `json:"result"`
+						ErrMsg  string `json:"errtype"`
+					} `json:"midurlinfo"`
 				} `json:"data"`
 			} `json:"req_1"`
 		}
 
-		if err := json.Unmarshal(body, &result); err != nil { lastErr = "json parse error"; continue }
+		if err := json.Unmarshal(body, &result); err != nil {
+			lastErr = "json parse error"
+			continue
+		}
 		if len(result.Req1.Data.MidUrlInfo) > 0 {
 			info := result.Req1.Data.MidUrlInfo[0]
-			if info.Purl == "" { lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result); continue }
+			if info.Purl == "" {
+				lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result)
+				continue
+			}
 			return "http://ws.stream.qqmusic.qq.com/" + info.Purl, nil
 		}
 	}
@@ -201,24 +451,31 @@ func (q *QQ) fetchSongDetail(songMID string) (*model.Song, error) {
 	params := url.Values{}
 	params.Set("songmid", songMID)
 	params.Set("format", "json")
-	
+
 	// 使用播放详情接口获取元数据
 	apiURL := "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg?" + params.Encode()
-	body, err := utils.Get(apiURL, 
+	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", SearchReferer),
 		utils.WithHeader("Cookie", q.cookie),
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	var resp struct {
 		Data []struct {
-			ID        int64  `json:"id"`
-			Name      string `json:"name"`
-			Mid       string `json:"mid"`
-			Album     struct { Name string `json:"name"`; Mid string `json:"mid"` } `json:"album"`
-			Singer    []struct { Name string `json:"name"` } `json:"singer"`
-			Interval  int `json:"interval"`
+			ID    int64  `json:"id"`
+			Name  string `json:"name"`
+			Mid   string `json:"mid"`
+			Album struct {
+				Name string `json:"name"`
+				Mid  string `json:"mid"`
+			} `json:"album"`
+			Singer []struct {
+				Name string `json:"name"`
+			} `json:"singer"`
+			Interval int `json:"interval"`
 		} `json:"data"`
 	}
 
@@ -232,7 +489,9 @@ func (q *QQ) fetchSongDetail(songMID string) (*model.Song, error) {
 
 	item := resp.Data[0]
 	var artistNames []string
-	for _, s := range item.Singer { artistNames = append(artistNames, s.Name) }
+	for _, s := range item.Singer {
+		artistNames = append(artistNames, s.Name)
+	}
 
 	var coverURL string
 	if item.Album.Mid != "" {
@@ -256,7 +515,9 @@ func (q *QQ) fetchSongDetail(songMID string) (*model.Song, error) {
 
 // GetLyrics 获取歌词
 func (q *QQ) GetLyrics(s *model.Song) (string, error) {
-	if s.Source != "qq" { return "", errors.New("source mismatch") }
+	if s.Source != "qq" {
+		return "", errors.New("source mismatch")
+	}
 
 	songMID := s.ID
 	if s.Extra != nil && s.Extra["songmid"] != "" {
@@ -282,21 +543,35 @@ func (q *QQ) GetLyrics(s *model.Song) (string, error) {
 	}
 
 	body, err := utils.Get(apiURL, headers...)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 
-	var resp struct { Retcode int `json:"retcode"`; Lyric string `json:"lyric"`; Trans string `json:"trans"` }
+	var resp struct {
+		Retcode int    `json:"retcode"`
+		Lyric   string `json:"lyric"`
+		Trans   string `json:"trans"`
+	}
 	sBody := string(body)
 	// 处理 JSONP 包装
 	if idx := strings.Index(sBody, "("); idx >= 0 {
 		sBody = sBody[idx+1:]
-		if idx2 := strings.LastIndex(sBody, ")"); idx2 >= 0 { sBody = sBody[:idx2] }
+		if idx2 := strings.LastIndex(sBody, ")"); idx2 >= 0 {
+			sBody = sBody[:idx2]
+		}
 	}
 
-	if err := json.Unmarshal([]byte(sBody), &resp); err != nil { return "", fmt.Errorf("qq lyric json parse error: %w", err) }
-	if resp.Lyric == "" { return "", errors.New("lyric is empty or not found") }
+	if err := json.Unmarshal([]byte(sBody), &resp); err != nil {
+		return "", fmt.Errorf("qq lyric json parse error: %w", err)
+	}
+	if resp.Lyric == "" {
+		return "", errors.New("lyric is empty or not found")
+	}
 
 	decodedBytes, err := base64.StdEncoding.DecodeString(resp.Lyric)
-	if err != nil { return "", fmt.Errorf("base64 decode error: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
 
 	return string(decodedBytes), nil
 }
