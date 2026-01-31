@@ -238,7 +238,7 @@ func main() {
 
 ## 许可证
 
-基于 [GNU Affero General Public License v3.0](https://github.com/guohuiyuan/music-lib/blob/main/LICENSE) 许可。
+本项目基于 [CharlesPikachu/musicdl](https://github.com/CharlesPikachu/musicdl) 的核心设计思路开发，遵循 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) 协议，禁止任何商业使用。
 
 ## 免责声明
 
