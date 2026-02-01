@@ -182,15 +182,17 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 	return songs, nil
 }
 
-// SearchPlaylist 搜索歌单
+// SearchPlaylist 搜索歌单 (PC API)
 func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params := url.Values{}
-	params.Set("key_word", keyword)
-	params.Set("type", "2") // 2 = 歌单 (Playlist)
-	params.Set("offset", "0")
-	params.Set("cnt", "10")
+	params.Set("q", keyword)
+	params.Set("cursor", "0")
+	params.Set("search_method", "input")
+	params.Set("aid", "386088")
+	params.Set("device_platform", "web")
+	params.Set("channel", "pc_web")
 
-	apiURL := "https://api.qishui.com/luna/pc/search?" + params.Encode()
+	apiURL := "https://api.qishui.com/luna/pc/search/playlist?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
@@ -201,55 +203,78 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	}
 
 	var resp struct {
-		StatusCode int    `json:"status_code"`
-		StatusMsg  string `json:"status_msg"`
-		Data       struct {
-			Playlist struct {
-				Data []struct {
-					ID          string `json:"id"`
-					Name        string `json:"name"`
-					CoverUrl    string `json:"cover_url"`
-					SongCount   int    `json:"song_count"`
-					PlayCount   int    `json:"play_count"`
-					CreatorInfo struct {
-						Name string `json:"name"`
-					} `json:"creator_info"`
-					Desc string `json:"desc"`
-				} `json:"data"`
-			} `json:"playlist"`
-		} `json:"data"`
+		ResultGroups []struct {
+			Data []struct {
+				Entity struct {
+					Playlist struct {
+						ID          string `json:"id"`
+						Title       string `json:"title"` // 字段名变更为 title
+						Desc        string `json:"desc"`
+						PublicName  string `json:"public_name"` // 创建者名字
+						CountTracks int    `json:"count_tracks"`
+						UrlCover    struct {
+							Urls []string `json:"urls"` // 封面图数组
+							Uri  string   `json:"uri"`
+						} `json:"url_cover"`
+					} `json:"playlist"`
+				} `json:"entity"`
+			} `json:"data"`
+		} `json:"result_groups"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("soda playlist json parse error: %w", err)
 	}
 
-	if resp.StatusCode != 0 {
-		return nil, fmt.Errorf("soda api error: %s", resp.StatusMsg)
+	var playlists []model.Playlist
+	if len(resp.ResultGroups) == 0 || len(resp.ResultGroups[0].Data) == 0 {
+		return nil, nil
 	}
 
-	var playlists []model.Playlist
-	for _, item := range resp.Data.Playlist.Data {
+	for _, item := range resp.ResultGroups[0].Data {
+		pl := item.Entity.Playlist
+		if pl.ID == "" {
+			continue
+		}
+
+		// 封面处理
+		cover := ""
+		if len(pl.UrlCover.Urls) > 0 {
+			domain := pl.UrlCover.Urls[0]
+			if pl.UrlCover.Uri != "" && !strings.Contains(domain, pl.UrlCover.Uri) {
+				cover = domain + pl.UrlCover.Uri
+			} else {
+				cover = domain
+			}
+			// 添加图片样式后缀
+			if cover != "" && !strings.Contains(cover, "~") {
+				cover += "~c5_300x300.jpg"
+			}
+		}
+
 		playlists = append(playlists, model.Playlist{
 			Source:      "soda",
-			ID:          item.ID,
-			Name:        item.Name,
-			Cover:       item.CoverUrl,
-			TrackCount:  item.SongCount,
-			PlayCount:   item.PlayCount,
-			Creator:     item.CreatorInfo.Name,
-			Description: item.Desc,
+			ID:          pl.ID,
+			Name:        pl.Title, // 使用 Title
+			Cover:       cover,
+			Creator:     pl.PublicName, // 使用 PublicName
+			Description: pl.Desc,
+			TrackCount:  pl.CountTracks, // API 未返回，只能填 0
+			PlayCount:   0,              // API 未返回
 		})
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs 获取歌单详情
+// GetPlaylistSongs 获取歌单详情 (PC API)
 func (s *Soda) GetPlaylistSongs(id string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("playlist_id", id)
-	params.Set("offset", "0")
-	params.Set("cnt", "100")
+	params.Set("cursor", "0") // 接口返回 next_cursor，说明请求参数应该是 cursor
+	params.Set("cnt", "20")
+	params.Set("aid", "386088")
+	params.Set("device_platform", "web")
+	params.Set("channel", "pc_web")
 
 	apiURL := "https://api.qishui.com/luna/pc/playlist/detail?" + params.Encode()
 
@@ -261,60 +286,135 @@ func (s *Soda) GetPlaylistSongs(id string) ([]model.Song, error) {
 		return nil, err
 	}
 
+	// 定义歌曲项结构
+	type SongItem struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		Title    string `json:"title"` // 兼容 title
+		Duration int    `json:"duration"`
+		Artists  []struct {
+			Name string `json:"name"`
+		} `json:"artists"`
+		Album struct {
+			Name     string `json:"name"`
+			UrlCover struct {
+				Urls []string `json:"urls"`
+				Uri  string   `json:"uri"`
+			} `json:"url_cover"`
+		} `json:"album"`
+		// 音频播放信息
+		AudioInfo struct {
+			PlayInfoList []struct {
+				MainPlayUrl string `json:"main_play_url"`
+				PlayAuth    string `json:"play_auth"`
+				Size        int64  `json:"size"`
+				Format      string `json:"format"`
+				Bitrate     int    `json:"bitrate"`
+			} `json:"play_info_list"`
+		} `json:"audio_info"`
+	}
+
+	// [修复] 适配新的 media_resources 结构
 	var resp struct {
 		StatusCode int `json:"status_code"`
-		Data       struct {
-			Songs []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Duration int    `json:"duration"` // 毫秒
-				Album    struct {
-					Name     string `json:"name"`
-					CoverUrl []struct {
-						Url string `json:"url"`
-					} `json:"cover_url"`
-				} `json:"album"`
-				Artists []struct {
-					Name string `json:"name"`
-				} `json:"artists"`
-			} `json:"songs"`
-		} `json:"data"`
+
+		// 新版 API 结构
+		MediaResources []struct {
+			Type   string `json:"type"`
+			Entity struct {
+				TrackWrapper struct {
+					Track SongItem `json:"track"`
+				} `json:"track_wrapper"`
+			} `json:"entity"`
+		} `json:"media_resources"`
+
+		// 旧版 API 结构 (保留兼容)
+		PlaylistSongs struct {
+			Songs []SongItem `json:"songs"`
+		} `json:"playlist_songs"`
+		Songs  []SongItem `json:"songs"`
+		Tracks []SongItem `json:"tracks"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("soda playlist detail json error: %w", err)
 	}
 
-	if len(resp.Data.Songs) == 0 {
-		return nil, errors.New("playlist is empty or invalid")
+	// 聚合可能的歌曲列表来源
+	var songList []SongItem
+	if len(resp.MediaResources) > 0 {
+		for _, resource := range resp.MediaResources {
+			if resource.Type == "track" {
+				songList = append(songList, resource.Entity.TrackWrapper.Track)
+			}
+		}
+	} else if len(resp.PlaylistSongs.Songs) > 0 {
+		songList = resp.PlaylistSongs.Songs
+	} else if len(resp.Songs) > 0 {
+		songList = resp.Songs
+	} else if len(resp.Tracks) > 0 {
+		songList = resp.Tracks
+	}
+
+	if len(songList) == 0 {
+		return nil, errors.New("playlist is empty or invalid (check cookie/id)")
 	}
 
 	var songs []model.Song
-	for _, item := range resp.Data.Songs {
-		var artistNames []string
+	for _, item := range songList {
+		var artists []string
 		for _, a := range item.Artists {
-			artistNames = append(artistNames, a.Name)
+			artists = append(artists, a.Name)
 		}
 
+		// 歌名兼容
+		name := item.Name
+		if name == "" {
+			name = item.Title
+		}
+
+		// 封面处理
 		cover := ""
-		if len(item.Album.CoverUrl) > 0 {
-			cover = item.Album.CoverUrl[0].Url
+		if len(item.Album.UrlCover.Urls) > 0 {
+			domain := item.Album.UrlCover.Urls[0]
+			uri := item.Album.UrlCover.Uri
+			if domain != "" && uri != "" {
+				cover = domain + uri + "~c5_375x375.jpg"
+			}
 		}
 
-		songs = append(songs, model.Song{
+		song := model.Song{
 			Source:   "soda",
 			ID:       item.ID,
-			Name:     item.Name,
-			Artist:   strings.Join(artistNames, "、"),
+			Name:     name,
+			Artist:   strings.Join(artists, "、"),
 			Album:    item.Album.Name,
-			Duration: item.Duration / 1000, // 毫秒转秒
+			Duration: item.Duration / 1000,
 			Cover:    cover,
-			// Soda PC 端没有常规网页链接，暂时构造一个
-			Link: fmt.Sprintf("https://www.qishui.com/track/%s", item.ID),
+			Link:     fmt.Sprintf("https://www.qishui.com/track/%s", item.ID),
 			Extra: map[string]string{
 				"track_id": item.ID,
 			},
-		})
+		}
+
+		// 尝试直接提取播放链接
+		if len(item.AudioInfo.PlayInfoList) > 0 {
+			// 简单策略：取文件最大的（通常音质最好）
+			best := item.AudioInfo.PlayInfoList[0]
+			for _, info := range item.AudioInfo.PlayInfoList {
+				if info.Size > best.Size {
+					best = info
+				}
+			}
+			if best.MainPlayUrl != "" {
+				song.URL = best.MainPlayUrl + "#auth=" + url.QueryEscape(best.PlayAuth)
+				song.Size = best.Size
+				song.Ext = best.Format
+				song.Bitrate = best.Bitrate
+			}
+		}
+
+		songs = append(songs, song)
 	}
 	return songs, nil
 }

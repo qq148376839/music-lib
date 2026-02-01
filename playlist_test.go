@@ -12,6 +12,7 @@ import (
 	"github.com/guohuiyuan/music-lib/netease"
 	"github.com/guohuiyuan/music-lib/qianqian"
 	"github.com/guohuiyuan/music-lib/qq"
+	"github.com/guohuiyuan/music-lib/soda"
 )
 
 // ==================== 测试1：仅搜索歌单 ====================
@@ -31,7 +32,7 @@ func TestSearchPlaylistOnly(t *testing.T) {
 		// {"qianqian", "抖音", qianqian.SearchPlaylist},
 		// {"jamendo", "Rock", jamendo.SearchPlaylist}, // Jamendo 推荐搜英文
 		// {"joox", "陈奕迅", joox.SearchPlaylist},
-		// {"soda", "热歌", soda.SearchPlaylist},
+		{"soda", "热歌", soda.SearchPlaylist},
 	}
 
 	for _, tt := range tests {
@@ -78,7 +79,7 @@ func TestGetPlaylistSongsOnly(t *testing.T) {
 		{"qianqian", "295013", "qianqian", qianqian.GetPlaylistSongs},
 		// {"jamendo", "500556272", "jamendo", jamendo.GetPlaylistSongs},
 		// {"joox", "88ecb5d8481353c7a7267425203303d2", "joox", joox.GetPlaylistSongs},
-		// {"soda", "7238294248450656293", "soda", soda.GetPlaylistSongs},
+		{"soda", "7189963287731093516", "soda", soda.GetPlaylistSongs},
 	}
 
 	for _, tc := range tests {
