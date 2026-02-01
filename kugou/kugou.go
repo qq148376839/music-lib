@@ -30,11 +30,18 @@ var defaultKugou = New("")
 func Search(keyword string) ([]model.Song, error) { return defaultKugou.Search(keyword) }
 func SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	return defaultKugou.SearchPlaylist(keyword)
-}                                                      // [新增]
-func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultKugou.GetPlaylistSongs(id) } // [新增]
-func GetDownloadURL(s *model.Song) (string, error)     { return defaultKugou.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error)          { return defaultKugou.GetLyrics(s) }
-func Parse(link string) (*model.Song, error)           { return defaultKugou.Parse(link) }
+}
+func GetPlaylistSongs(id string) ([]model.Song, error) {
+	// 保持原接口兼容性，仅返回 Songs
+	_, songs, err := defaultKugou.fetchPlaylistDetail(id)
+	return songs, err
+}
+func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) { // [新增]
+	return defaultKugou.ParsePlaylist(link)
+}
+func GetDownloadURL(s *model.Song) (string, error) { return defaultKugou.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)      { return defaultKugou.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)       { return defaultKugou.Parse(link) }
 
 // Search 搜索歌曲
 func (k *Kugou) Search(keyword string) ([]model.Song, error) {
@@ -141,8 +148,6 @@ func (k *Kugou) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params.Set("page", "1")
 	params.Set("pagesize", "10")
 	params.Set("filter", "0")
-	// 注意：酷狗的 special_search 接口与 song_search 略有不同，
-	// 这里使用 mobilecdn 接口，它通常更稳定且结构简单。
 	apiURL := "http://mobilecdn.kugou.com/api/v3/search/special?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
@@ -184,15 +189,37 @@ func (k *Kugou) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			PlayCount:   item.PlayCount,
 			Creator:     item.NickName,
 			Description: item.Intro,
+			// [修改] 填充 Link 字段
+			Link: fmt.Sprintf("https://www.kugou.com/yy/special/single/%d.html", item.SpecialID),
 		})
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs 获取歌单详情（解析歌曲列表）
+// GetPlaylistSongs 获取歌单详情 (仅返回 Songs, 兼容旧接口)
 func (k *Kugou) GetPlaylistSongs(id string) ([]model.Song, error) {
-	// 酷狗歌单详情接口
-	// id 即 special_id
+	_, songs, err := k.fetchPlaylistDetail(id)
+	return songs, err
+}
+
+// ParsePlaylist [新增] 解析歌单链接
+func (k *Kugou) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
+	// 链接格式: https://www.kugou.com/yy/special/single/546903.html
+	re := regexp.MustCompile(`special/single/(\d+)\.html`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, nil, errors.New("invalid kugou playlist link")
+	}
+	specialID := matches[1]
+
+	return k.fetchPlaylistDetail(specialID)
+}
+
+// fetchPlaylistDetail [内部复用] 获取歌单详情 (Metadata + Songs)
+// 酷狗的接口比较特殊，song 接口只返回歌曲列表，元数据需要单独请求 (或者从 search 中获取)
+// 这里我们尝试从 song 接口的返回中拼凑，或者直接忽略元数据(如果接口没返回)
+func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, error) {
+	// 酷狗获取歌单歌曲的接口
 	apiURL := fmt.Sprintf("http://mobilecdn.kugou.com/api/v3/special/song?specialid=%s&page=1&pagesize=300&version=9108&area_code=1", id)
 
 	body, err := utils.Get(apiURL,
@@ -200,31 +227,41 @@ func (k *Kugou) GetPlaylistSongs(id string) ([]model.Song, error) {
 		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var resp struct {
 		Data struct {
+			// 酷狗这个接口有时也会返回 info 对象包含歌单信息，但结构不一定稳定
+			// 我们主要关注歌曲列表
 			Info []struct {
 				Hash       string `json:"hash"`
-				FileName   string `json:"filename"` // 格式通常为 "歌手 - 歌名"
+				FileName   string `json:"filename"`
 				Duration   int    `json:"duration"`
 				FileSize   int64  `json:"filesize"`
 				AlbumName  string `json:"album_name"`
 				SingerName string `json:"singername"`
-				SongName   string `json:"songname"` // 可能为空，需从 filename 解析
-				// 酷狗这里返回的图片通常是歌手图，不是单曲封面，暂且忽略
+				SongName   string `json:"songname"`
 			} `json:"info"`
+			// 如果有 extra 字段可能包含歌单名，暂且忽略，只返回基础 Playlist 对象
 		} `json:"data"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("kugou playlist detail json error: %w", err)
+		return nil, nil, fmt.Errorf("kugou playlist detail json error: %w", err)
+	}
+
+	// 构造 Playlist 元数据 (该接口未返回详细元数据，只能填基础 ID 和 Link)
+	// 如果需要详细元数据，需要调用另一个接口 http://mobilecdn.kugou.com/api/v3/special/get_special?specialid=...
+	playlist := &model.Playlist{
+		Source: "kugou",
+		ID:     id,
+		Link:   fmt.Sprintf("https://www.kugou.com/yy/special/single/%s.html", id),
+		// Name, Cover 等字段因为接口限制暂为空，如果前端需要展示，建议在调用 ParsePlaylist 后手动补全或调用额外接口
 	}
 
 	var songs []model.Song
 	for _, item := range resp.Data.Info {
-		// 容错处理：有时 SongName/SingerName 为空，需从 FileName 解析
 		name := item.SongName
 		artist := item.SingerName
 		if name == "" || artist == "" {
@@ -251,13 +288,16 @@ func (k *Kugou) GetPlaylistSongs(id string) ([]model.Song, error) {
 			},
 		})
 	}
-	return songs, nil
+	
+	// 更新歌曲数
+	playlist.TrackCount = len(songs)
+	
+	return playlist, songs, nil
 }
 
 // Parse 解析链接
 func (k *Kugou) Parse(link string) (*model.Song, error) {
 	// 1. 提取 Hash
-	// 支持格式: https://www.kugou.com/song/#hash=3C3D... 或 &hash=...
 	re := regexp.MustCompile(`(?i)hash=([a-f0-9]{32})`)
 	matches := re.FindStringSubmatch(link)
 	if len(matches) < 2 {
@@ -312,9 +352,9 @@ func (k *Kugou) fetchSongInfo(hash string) (*model.Song, error) {
 		BitRate    int         `json:"bitRate"`
 		ExtName    string      `json:"extName"`
 		AlbumImg   string      `json:"album_img"`
-		SongName   string      `json:"songName"`    // 扩展字段
-		AuthorName string      `json:"author_name"` // 扩展字段
-		TimeLength int         `json:"timeLength"`  // 扩展字段
+		SongName   string      `json:"songName"`
+		AuthorName string      `json:"author_name"`
+		TimeLength int         `json:"timeLength"`
 		FileSize   int64       `json:"fileSize"`
 		Error      interface{} `json:"error"`
 	}
@@ -327,7 +367,6 @@ func (k *Kugou) fetchSongInfo(hash string) (*model.Song, error) {
 		return nil, errors.New("download url not found (might be paid song)")
 	}
 
-	// 封面图处理
 	cover := strings.Replace(resp.AlbumImg, "{size}", "240", 1)
 
 	return &model.Song{

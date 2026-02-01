@@ -30,11 +30,17 @@ var defaultKuwo = New("")
 func Search(keyword string) ([]model.Song, error) { return defaultKuwo.Search(keyword) }
 func SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	return defaultKuwo.SearchPlaylist(keyword)
-}                                                      // [新增]
-func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultKuwo.GetPlaylistSongs(id) } // [新增]
-func GetDownloadURL(s *model.Song) (string, error)     { return defaultKuwo.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error)          { return defaultKuwo.GetLyrics(s) }
-func Parse(link string) (*model.Song, error)           { return defaultKuwo.Parse(link) }
+}
+func GetPlaylistSongs(id string) ([]model.Song, error) {
+	_, songs, err := defaultKuwo.fetchPlaylistDetail(id)
+	return songs, err
+}
+func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) { // [新增]
+	return defaultKuwo.ParsePlaylist(link)
+}
+func GetDownloadURL(s *model.Song) (string, error) { return defaultKuwo.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)      { return defaultKuwo.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)       { return defaultKuwo.Parse(link) }
 
 // Search 搜索歌曲
 func (k *Kuwo) Search(keyword string) ([]model.Song, error) {
@@ -127,7 +133,6 @@ func (k *Kuwo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params.Set("rformat", "json")
 	params.Set("encoding", "utf8")
 
-	// 使用 search.kuwo.cn 接口
 	apiURL := "http://search.kuwo.cn/r.s?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
@@ -138,12 +143,9 @@ func (k *Kuwo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 		return nil, err
 	}
 
-	// [关键修复] 酷我旧接口返回的是 {'key':'value'} 格式（单引号），非标准JSON
-	// 我们需要手动替换为双引号才能被 Go 解析
 	jsonStr := string(body)
 	jsonStr = strings.ReplaceAll(jsonStr, "'", "\"")
 
-	// 定义与清洗后 JSON 匹配的结构体
 	var resp struct {
 		AbsList []struct {
 			PlaylistID string `json:"playlistid"`
@@ -151,25 +153,19 @@ func (k *Kuwo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			Pic        string `json:"pic"`
 			SongNum    string `json:"songnum"`
 			Intro      string `json:"intro"`
-			NickName   string `json:"nickname"` // 之前是 UNAME，实际是 nickname
+			NickName   string `json:"nickname"`
 		} `json:"abslist"`
 	}
 
-	// 解析清洗后的字符串
 	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
-		// 如果替换后仍然解析失败，打印原始数据以便调试
-		// fmt.Printf("DEBUG: Original Kuwo Body: %s\n", string(body))
 		return nil, fmt.Errorf("kuwo playlist json parse error: %w", err)
 	}
 
 	var playlists []model.Playlist
 	for _, item := range resp.AbsList {
 		count, _ := strconv.Atoi(item.SongNum)
-		// 图片链接修复：有时候不带协议头
 		cover := item.Pic
 		if cover != "" {
-			// 修复可能出现的图片尺寸后缀，例如 _150.jpg -> _700.jpg 获取大图
-			// 酷我图片通常格式: .../123456_150.jpg
 			cover = strings.Replace(cover, "_150.", "_700.", 1)
 			if !strings.HasPrefix(cover, "http") {
 				cover = "http://" + cover
@@ -184,6 +180,8 @@ func (k *Kuwo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			TrackCount:  count,
 			Creator:     item.NickName,
 			Description: item.Intro,
+			// [修改] 填充 Link
+			Link: fmt.Sprintf("http://www.kuwo.cn/playlist_detail/%s", item.PlaylistID),
 		})
 	}
 	return playlists, nil
@@ -191,6 +189,25 @@ func (k *Kuwo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 
 // GetPlaylistSongs 获取歌单详情（解析歌曲列表）
 func (k *Kuwo) GetPlaylistSongs(id string) ([]model.Song, error) {
+	_, songs, err := k.fetchPlaylistDetail(id)
+	return songs, err
+}
+
+// ParsePlaylist [新增] 解析歌单链接
+func (k *Kuwo) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
+	// 链接格式: http://www.kuwo.cn/playlist_detail/1082685103
+	re := regexp.MustCompile(`playlist_detail/(\d+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, nil, errors.New("invalid kuwo playlist link")
+	}
+	playlistID := matches[1]
+
+	return k.fetchPlaylistDetail(playlistID)
+}
+
+// fetchPlaylistDetail [内部复用] 获取歌单详情 (Metadata + Songs)
+func (k *Kuwo) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, error) {
 	params := url.Values{}
 	params.Set("op", "getlistinfo")
 	params.Set("pid", id)
@@ -210,41 +227,42 @@ func (k *Kuwo) GetPlaylistSongs(id string) ([]model.Song, error) {
 		utils.WithHeader("Cookie", k.cookie),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// 定义与实际返回 JSON 匹配的结构体
 	var resp struct {
 		MusicList []struct {
-			Id     string `json:"id"`
-			Name   string `json:"name"`
-			Artist string `json:"artist"`
-			Album  string `json:"album"`
-
-			// [修复] 实际返回的图片字段是 albumpic
-			AlbumPic string `json:"albumpic"`
-
-			// [修复] 甚至 ID 也是字符串，duration 也是字符串
-			// 使用 interface{} 兼容 string 或 int
-			Duration interface{} `json:"duration"`
-
-			// 备用字段
-			SongName   string `json:"song_name"`
-			ArtistName string `json:"artist_name"`
+			Id         string      `json:"id"`
+			Name       string      `json:"name"`
+			Artist     string      `json:"artist"`
+			Album      string      `json:"album"`
+			AlbumPic   string      `json:"albumpic"`
+			Duration   interface{} `json:"duration"`
+			SongName   string      `json:"song_name"`
+			ArtistName string      `json:"artist_name"`
 		} `json:"musiclist"`
+		// 注意: 这个接口可能也返回 title, pic 等歌单信息，但往往不全
+		// 这里暂且构造一个基础 Playlist 对象
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("kuwo playlist detail json error: %w", err)
+		return nil, nil, fmt.Errorf("kuwo playlist detail json error: %w", err)
 	}
 
 	if len(resp.MusicList) == 0 {
-		return nil, errors.New("playlist is empty or id is invalid")
+		return nil, nil, errors.New("playlist is empty or id is invalid")
+	}
+
+	playlist := &model.Playlist{
+		Source:     "kuwo",
+		ID:         id,
+		Link:       fmt.Sprintf("http://www.kuwo.cn/playlist_detail/%s", id),
+		TrackCount: len(resp.MusicList),
+		// Name, Cover 等字段因为接口限制暂为空
 	}
 
 	var songs []model.Song
 	for _, item := range resp.MusicList {
-		// 1. 字段容错
 		name := item.Name
 		if name == "" {
 			name = item.SongName
@@ -254,32 +272,25 @@ func (k *Kuwo) GetPlaylistSongs(id string) ([]model.Song, error) {
 			artist = item.ArtistName
 		}
 
-		// 2. 解析 Duration (可能是 string 也可能是 float/int)
 		var duration int
 		switch v := item.Duration.(type) {
 		case string:
-			// 如果是字符串 "154"
 			d, _ := strconv.Atoi(v)
 			duration = d
 		case float64:
-			// 如果是数字 154
 			duration = int(v)
 		}
 
-		// 3. 图片链接修复
 		cover := item.AlbumPic
 		if cover != "" {
-			// 补全协议头
 			if !strings.HasPrefix(cover, "http") {
 				cover = "http://" + cover
 			}
-			// 尝试获取大图：将 _100.jpg / _150.jpg 替换为 _500.jpg
-			// 酷我图片 URL 规律通常包含尺寸信息
 			if strings.Contains(cover, "_100.") {
 				cover = strings.Replace(cover, "_100.", "_500.", 1)
 			} else if strings.Contains(cover, "_150.") {
 				cover = strings.Replace(cover, "_150.", "_500.", 1)
-			} else if strings.Contains(cover, "_120.") { // 有时是 120
+			} else if strings.Contains(cover, "_120.") {
 				cover = strings.Replace(cover, "_120.", "_500.", 1)
 			}
 		}
@@ -298,13 +309,11 @@ func (k *Kuwo) GetPlaylistSongs(id string) ([]model.Song, error) {
 			},
 		})
 	}
-	return songs, nil
+	return playlist, songs, nil
 }
 
 // Parse 解析链接并获取完整信息
 func (k *Kuwo) Parse(link string) (*model.Song, error) {
-	// 1. 提取 RID
-	// 支持格式: http://www.kuwo.cn/play_detail/123456
 	re := regexp.MustCompile(`play_detail/(\d+)`)
 	matches := re.FindStringSubmatch(link)
 	if len(matches) < 2 {
@@ -312,7 +321,6 @@ func (k *Kuwo) Parse(link string) (*model.Song, error) {
 	}
 	rid := matches[1]
 
-	// 2. 结合元数据 API 和 下载链接 API
 	return k.fetchFullSongInfo(rid)
 }
 
@@ -335,7 +343,6 @@ func (k *Kuwo) GetDownloadURL(s *model.Song) (string, error) {
 
 // fetchFullSongInfo 内部聚合：同时获取元数据和下载链接
 func (k *Kuwo) fetchFullSongInfo(rid string) (*model.Song, error) {
-	// A. 尝试获取元数据 (复用 GetLyrics 调用的接口，该接口包含 SongInfo)
 	params := url.Values{}
 	params.Set("musicId", rid)
 	params.Set("httpsStatus", "1")
@@ -361,16 +368,12 @@ func (k *Kuwo) fetchFullSongInfo(rid string) (*model.Song, error) {
 		}
 	}
 
-	// 兜底 Name
 	if name == "" {
 		name = fmt.Sprintf("Kuwo_Song_%s", rid)
 	}
 
-	// B. 获取下载链接
 	audioURL, err := k.fetchAudioURL(rid)
 	if err != nil {
-		// 即使没有音频，也返回元数据，但在实际使用中可能希望报错
-		// 这里选择报错，保证 Parse 的结果是可用下载的
 		return nil, err
 	}
 

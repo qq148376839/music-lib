@@ -33,7 +33,10 @@ func Search(keyword string) ([]model.Song, error)             { return defaultNe
 func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultNetease.SearchPlaylist(keyword) }
 func GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 	return defaultNetease.GetPlaylistSongs(playlistID)
-} // [新增]
+}
+func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) { // [新增]
+	return defaultNetease.ParsePlaylist(link)
+}
 func GetDownloadURL(s *model.Song) (string, error) { return defaultNetease.GetDownloadURL(s) }
 func GetLyrics(s *model.Song) (string, error)      { return defaultNetease.GetLyrics(s) }
 func Parse(link string) (*model.Song, error)       { return defaultNetease.Parse(link) }
@@ -182,13 +185,36 @@ func (n *Netease) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			PlayCount:   item.PlayCount,
 			Creator:     item.Creator.Nickname,
 			Description: item.Description,
+			// [修改] 填充 Link 字段
+			Link: fmt.Sprintf("https://music.163.com/#/playlist?id=%d", item.ID),
 		})
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs [新增] 获取歌单详情（解析歌曲列表）
+// GetPlaylistSongs 获取歌单详情（仅返回歌曲列表）
 func (n *Netease) GetPlaylistSongs(playlistID string) ([]model.Song, error) {
+	_, songs, err := n.fetchPlaylistDetail(playlistID)
+	return songs, err
+}
+
+// ParsePlaylist [新增] 解析歌单链接
+func (n *Netease) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
+	// 提取 ID
+	// 链接格式通常为 https://music.163.com/#/playlist?id=24381616 或 https://music.163.com/playlist?id=24381616
+	re := regexp.MustCompile(`playlist\?id=(\d+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, nil, errors.New("invalid netease playlist link")
+	}
+	playlistID := matches[1]
+
+	// 复用 fetchPlaylistDetail 获取完整信息
+	return n.fetchPlaylistDetail(playlistID)
+}
+
+// fetchPlaylistDetail [内部复用] 获取歌单详情（包含 Metadata 和 Tracks）
+func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []model.Song, error) {
 	reqData := map[string]interface{}{
 		"id":         playlistID,
 		"n":          1000, // 限制获取歌曲数量，最大通常为 1000
@@ -208,12 +234,21 @@ func (n *Netease) GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 
 	body, err := utils.Post(PlaylistAPI, strings.NewReader(form.Encode()), headers...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var resp struct {
 		Code int `json:"code"`
 		Playlist struct {
+			ID          int    `json:"id"`
+			Name        string `json:"name"`
+			CoverImgURL string `json:"coverImgUrl"`
+			Description string `json:"description"`
+			PlayCount   int    `json:"playCount"`
+			TrackCount  int    `json:"trackCount"`
+			Creator     struct {
+				Nickname string `json:"nickname"`
+			} `json:"creator"`
 			Tracks []struct {
 				ID   int    `json:"id"`
 				Name string `json:"name"`
@@ -225,12 +260,26 @@ func (n *Netease) GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("netease playlist detail json parse error: %w", err)
+		return nil, nil, fmt.Errorf("netease playlist detail json parse error: %w", err)
 	}
 	if resp.Code != 200 {
-		return nil, fmt.Errorf("netease api error code: %d", resp.Code)
+		return nil, nil, fmt.Errorf("netease api error code: %d", resp.Code)
 	}
 
+	// 构造 Playlist 元数据
+	playlist := &model.Playlist{
+		Source:      "netease",
+		ID:          strconv.Itoa(resp.Playlist.ID),
+		Name:        resp.Playlist.Name,
+		Cover:       resp.Playlist.CoverImgURL,
+		TrackCount:  resp.Playlist.TrackCount,
+		PlayCount:   resp.Playlist.PlayCount,
+		Creator:     resp.Playlist.Creator.Nickname,
+		Description: resp.Playlist.Description,
+		Link:        fmt.Sprintf("https://music.163.com/#/playlist?id=%d", resp.Playlist.ID),
+	}
+
+	// 构造 Tracks
 	var songs []model.Song
 	for _, item := range resp.Playlist.Tracks {
 		var artistNames []string
@@ -252,7 +301,7 @@ func (n *Netease) GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 			},
 		})
 	}
-	return songs, nil
+	return playlist, songs, nil
 }
 
 // Parse 解析链接并获取完整信息

@@ -1,12 +1,6 @@
 package soda
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +18,7 @@ import (
 )
 
 const (
+	// PC端 UserAgent
 	UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 )
 
@@ -38,15 +33,22 @@ var defaultSoda = New("")
 func Search(keyword string) ([]model.Song, error) { return defaultSoda.Search(keyword) }
 func SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	return defaultSoda.SearchPlaylist(keyword)
-}                                                          // [新增]
-func GetPlaylistSongs(id string) ([]model.Song, error)     { return defaultSoda.GetPlaylistSongs(id) } // [新增]
+}
+func GetPlaylistSongs(id string) ([]model.Song, error) {
+	// 复用 fetchPlaylistDetail，只返回歌曲列表
+	_, songs, err := defaultSoda.fetchPlaylistDetail(id)
+	return songs, err
+}
+func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) { // [新增]
+	return defaultSoda.ParsePlaylist(link)
+}
 func GetDownloadInfo(s *model.Song) (*DownloadInfo, error) { return defaultSoda.GetDownloadInfo(s) }
 func GetDownloadURL(s *model.Song) (string, error)         { return defaultSoda.GetDownloadURL(s) }
 func Download(s *model.Song, outputPath string) error      { return defaultSoda.Download(s, outputPath) }
 func GetLyrics(s *model.Song) (string, error)              { return defaultSoda.GetLyrics(s) }
 func Parse(link string) (*model.Song, error)               { return defaultSoda.Parse(link) }
 
-// Search 搜索歌曲
+// Search 搜索歌曲 (PC API)
 func (s *Soda) Search(keyword string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("q", keyword)
@@ -83,11 +85,6 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 								Uri  string   `json:"uri"`
 							} `json:"url_cover"`
 						} `json:"album"`
-						QualityMap map[string]struct {
-							DownloadDetail *struct {
-								NeedVip bool `json:"need_vip"`
-							} `json:"download_detail"`
-						} `json:"quality_map"`
 						BitRates []struct {
 							Size    int64  `json:"size"`
 							Quality string `json:"quality"`
@@ -112,35 +109,12 @@ func (s *Soda) Search(keyword string) ([]model.Song, error) {
 			continue
 		}
 
-		var maxFreeSize int64
-		var maxVipSize int64
-
-		for _, br := range track.BitRates {
-			isVip := false
-			if qInfo, ok := track.QualityMap[br.Quality]; ok && qInfo.DownloadDetail != nil {
-				if qInfo.DownloadDetail.NeedVip {
-					isVip = true
-				}
-			}
-			if !isVip {
-				if br.Size > maxFreeSize {
-					maxFreeSize = br.Size
-				}
-			} else {
-				if br.Size > maxVipSize {
-					maxVipSize = br.Size
-				}
-			}
-		}
-
+		// 计算最大文件大小
 		var displaySize int64
-		if maxFreeSize > 0 {
-			displaySize = maxFreeSize
-		} else {
-			displaySize = maxVipSize
-		}
-		if displaySize == 0 {
-			continue
+		for _, br := range track.BitRates {
+			if br.Size > displaySize {
+				displaySize = br.Size
+			}
 		}
 
 		var artistNames []string
@@ -208,12 +182,12 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 				Entity struct {
 					Playlist struct {
 						ID          string `json:"id"`
-						Title       string `json:"title"` // 字段名变更为 title
+						Title       string `json:"title"`
 						Desc        string `json:"desc"`
-						PublicName  string `json:"public_name"` // 创建者名字
-						CountTracks int    `json:"count_tracks"`
+						PublicName  string `json:"public_name"`
+						CountTracks int    `json:"count_tracks"` // Added count_tracks
 						UrlCover    struct {
-							Urls []string `json:"urls"` // 封面图数组
+							Urls []string `json:"urls"`
 							Uri  string   `json:"uri"`
 						} `json:"url_cover"`
 					} `json:"playlist"`
@@ -237,7 +211,6 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			continue
 		}
 
-		// 封面处理
 		cover := ""
 		if len(pl.UrlCover.Urls) > 0 {
 			domain := pl.UrlCover.Urls[0]
@@ -246,7 +219,6 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			} else {
 				cover = domain
 			}
-			// 添加图片样式后缀
 			if cover != "" && !strings.Contains(cover, "~") {
 				cover += "~c5_300x300.jpg"
 			}
@@ -255,23 +227,45 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 		playlists = append(playlists, model.Playlist{
 			Source:      "soda",
 			ID:          pl.ID,
-			Name:        pl.Title, // 使用 Title
+			Name:        pl.Title,
 			Cover:       cover,
-			Creator:     pl.PublicName, // 使用 PublicName
+			TrackCount:  pl.CountTracks,
+			Creator:     pl.PublicName,
 			Description: pl.Desc,
-			TrackCount:  pl.CountTracks, // API 未返回，只能填 0
-			PlayCount:   0,              // API 未返回
+			// [新增] 填充 Link 字段
+			Link: fmt.Sprintf("https://www.qishui.com/playlist/%s", pl.ID),
 		})
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs 获取歌单详情 (PC API)
+// GetPlaylistSongs [新增] 获取歌单所有歌曲
 func (s *Soda) GetPlaylistSongs(id string) ([]model.Song, error) {
+	// 复用 fetchPlaylistDetail，只返回歌曲列表
+	_, songs, err := s.fetchPlaylistDetail(id)
+	return songs, err
+}
+
+// ParsePlaylist [新增] 解析歌单链接
+func (s *Soda) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
+	// 链接格式如: https://www.qishui.com/playlist/7200303561195061287
+	re := regexp.MustCompile(`playlist/(\d+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, nil, errors.New("invalid soda playlist link")
+	}
+	playlistID := matches[1]
+
+	// 复用 fetchPlaylistDetail
+	return s.fetchPlaylistDetail(playlistID)
+}
+
+// fetchPlaylistDetail [内部通用] 获取歌单详情 (Metadata + Songs)
+func (s *Soda) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, error) {
 	params := url.Values{}
 	params.Set("playlist_id", id)
-	params.Set("cursor", "0") // 接口返回 next_cursor，说明请求参数应该是 cursor
-	params.Set("cnt", "20")
+	params.Set("cursor", "0")
+	params.Set("cnt", "20") // PC端通常限制20，需翻页可在此扩展
 	params.Set("aid", "386088")
 	params.Set("device_platform", "web")
 	params.Set("channel", "pc_web")
@@ -283,132 +277,165 @@ func (s *Soda) GetPlaylistSongs(id string) ([]model.Song, error) {
 		utils.WithHeader("Cookie", s.cookie),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	// 定义歌曲项结构
-	type SongItem struct {
-		ID       string `json:"id"`
-		Name     string `json:"name"`
-		Title    string `json:"title"` // 兼容 title
-		Duration int    `json:"duration"`
-		Artists  []struct {
-			Name string `json:"name"`
-		} `json:"artists"`
-		Album struct {
-			Name     string `json:"name"`
-			UrlCover struct {
+	// 新的结构体定义匹配实际 API 返回
+	var resp struct {
+		Playlist struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+			Desc  string `json:"desc"`
+			Owner struct {
+				Nickname string `json:"nickname"`
+			} `json:"owner"`
+			CountTracks int `json:"count_tracks"`
+			UrlCover    struct {
 				Urls []string `json:"urls"`
 				Uri  string   `json:"uri"`
 			} `json:"url_cover"`
-		} `json:"album"`
-		// 音频播放信息
-		AudioInfo struct {
-			PlayInfoList []struct {
-				MainPlayUrl string `json:"main_play_url"`
-				PlayAuth    string `json:"play_auth"`
-				Size        int64  `json:"size"`
-				Format      string `json:"format"`
-				Bitrate     int    `json:"bitrate"`
-			} `json:"play_info_list"`
-		} `json:"audio_info"`
-	}
+		} `json:"playlist"`
 
-	// [修复] 适配新的 media_resources 结构
-	var resp struct {
-		StatusCode int `json:"status_code"`
-
-		// 新版 API 结构
 		MediaResources []struct {
 			Type   string `json:"type"`
 			Entity struct {
 				TrackWrapper struct {
-					Track SongItem `json:"track"`
+					Track struct {
+						ID       string `json:"id"`
+						Name     string `json:"name"`
+						Duration int    `json:"duration"`
+						Artists  []struct {
+							Name string `json:"name"`
+						} `json:"artists"`
+						Album struct {
+							Name     string `json:"name"`
+							UrlCover struct {
+								Urls []string `json:"urls"`
+								Uri  string   `json:"uri"`
+							} `json:"url_cover"`
+						} `json:"album"`
+						BitRates []struct {
+							Size    int64  `json:"size"`
+							Quality string `json:"quality"`
+						} `json:"bit_rates"`
+						AudioInfo struct {
+							PlayInfoList []struct {
+								MainPlayUrl string `json:"main_play_url"`
+								PlayAuth    string `json:"play_auth"`
+								Size        int64  `json:"size"`
+								Format      string `json:"format"`
+								Bitrate     int    `json:"bitrate"`
+							} `json:"play_info_list"`
+						} `json:"audio_info"`
+					} `json:"track"`
 				} `json:"track_wrapper"`
 			} `json:"entity"`
 		} `json:"media_resources"`
-
-		// 旧版 API 结构 (保留兼容)
-		PlaylistSongs struct {
-			Songs []SongItem `json:"songs"`
-		} `json:"playlist_songs"`
-		Songs  []SongItem `json:"songs"`
-		Tracks []SongItem `json:"tracks"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("soda playlist detail json error: %w", err)
+		return nil, nil, fmt.Errorf("soda playlist detail json error: %w", err)
 	}
 
-	// 聚合可能的歌曲列表来源
-	var songList []SongItem
-	if len(resp.MediaResources) > 0 {
-		for _, resource := range resp.MediaResources {
-			if resource.Type == "track" {
-				songList = append(songList, resource.Entity.TrackWrapper.Track)
-			}
+	// 1. 构造 Playlist 元数据
+	pl := &model.Playlist{
+		Source:      "soda",
+		ID:          id,
+		Name:        resp.Playlist.Title,
+		Creator:     resp.Playlist.Owner.Nickname,
+		Description: resp.Playlist.Desc,
+		TrackCount:  resp.Playlist.CountTracks,
+		Link:        fmt.Sprintf("https://www.qishui.com/playlist/%s", id),
+	}
+	// 封面处理
+	if len(resp.Playlist.UrlCover.Urls) > 0 {
+		cover := resp.Playlist.UrlCover.Urls[0]
+		if resp.Playlist.UrlCover.Uri != "" && !strings.Contains(cover, resp.Playlist.UrlCover.Uri) {
+			cover += resp.Playlist.UrlCover.Uri
 		}
-	} else if len(resp.PlaylistSongs.Songs) > 0 {
-		songList = resp.PlaylistSongs.Songs
-	} else if len(resp.Songs) > 0 {
-		songList = resp.Songs
-	} else if len(resp.Tracks) > 0 {
-		songList = resp.Tracks
+		if !strings.Contains(cover, "~") {
+			cover += "~c5_300x300.jpg"
+		}
+		pl.Cover = cover
 	}
 
-	if len(songList) == 0 {
-		return nil, errors.New("playlist is empty or invalid (check cookie/id)")
-	}
-
+	// 2. 构造 Songs 列表
 	var songs []model.Song
-	for _, item := range songList {
-		var artists []string
-		for _, a := range item.Artists {
-			artists = append(artists, a.Name)
+	for _, item := range resp.MediaResources {
+		if item.Type != "track" {
+			continue
+		}
+		track := item.Entity.TrackWrapper.Track
+		if track.ID == "" {
+			continue
 		}
 
-		// 歌名兼容
-		name := item.Name
-		if name == "" {
-			name = item.Title
-		}
-
-		// 封面处理
-		cover := ""
-		if len(item.Album.UrlCover.Urls) > 0 {
-			domain := item.Album.UrlCover.Urls[0]
-			uri := item.Album.UrlCover.Uri
-			if domain != "" && uri != "" {
-				cover = domain + uri + "~c5_375x375.jpg"
+		// 计算最大文件大小
+		var displaySize int64
+		// 优先从 BitRates 获取
+		for _, br := range track.BitRates {
+			if br.Size > displaySize {
+				displaySize = br.Size
 			}
+		}
+		// 也可以尝试从 PlayInfoList 获取
+		for _, pi := range track.AudioInfo.PlayInfoList {
+			if pi.Size > displaySize {
+				displaySize = pi.Size
+			}
+		}
+
+		var artistNames []string
+		for _, ar := range track.Artists {
+			artistNames = append(artistNames, ar.Name)
+		}
+
+		var cover string
+		if len(track.Album.UrlCover.Urls) > 0 {
+			domain := track.Album.UrlCover.Urls[0]
+			uri := track.Album.UrlCover.Uri
+			if domain != "" && uri != "" && !strings.Contains(domain, uri) {
+				cover = domain + uri + "~c5_375x375.jpg"
+			} else if domain != "" {
+				cover = domain + "~c5_375x375.jpg"
+			}
+		}
+
+		bitrate := 0
+		seconds := track.Duration / 1000
+		if seconds > 0 && displaySize > 0 {
+			bitrate = int(displaySize * 8 / 1000 / int64(seconds))
 		}
 
 		song := model.Song{
 			Source:   "soda",
-			ID:       item.ID,
-			Name:     name,
-			Artist:   strings.Join(artists, "、"),
-			Album:    item.Album.Name,
-			Duration: item.Duration / 1000,
+			ID:       track.ID,
+			Name:     track.Name,
+			Artist:   strings.Join(artistNames, "、"),
+			Album:    track.Album.Name,
+			Duration: track.Duration / 1000,
+			Size:     displaySize,
+			Bitrate:  bitrate,
 			Cover:    cover,
-			Link:     fmt.Sprintf("https://www.qishui.com/track/%s", item.ID),
+			Link:     fmt.Sprintf("https://www.qishui.com/track/%s", track.ID),
 			Extra: map[string]string{
-				"track_id": item.ID,
+				"track_id": track.ID,
 			},
 		}
 
-		// 尝试直接提取播放链接
-		if len(item.AudioInfo.PlayInfoList) > 0 {
-			// 简单策略：取文件最大的（通常音质最好）
-			best := item.AudioInfo.PlayInfoList[0]
-			for _, info := range item.AudioInfo.PlayInfoList {
+		// 填充播放链接 (如果有)
+		if len(track.AudioInfo.PlayInfoList) > 0 {
+			best := track.AudioInfo.PlayInfoList[0]
+			for _, info := range track.AudioInfo.PlayInfoList {
 				if info.Size > best.Size {
 					best = info
 				}
 			}
 			if best.MainPlayUrl != "" {
 				song.URL = best.MainPlayUrl + "#auth=" + url.QueryEscape(best.PlayAuth)
-				song.Size = best.Size
+				if song.Size == 0 {
+					song.Size = best.Size
+				}
 				song.Ext = best.Format
 				song.Bitrate = best.Bitrate
 			}
@@ -416,123 +443,24 @@ func (s *Soda) GetPlaylistSongs(id string) ([]model.Song, error) {
 
 		songs = append(songs, song)
 	}
-	return songs, nil
-}
-
-// Parse 解析链接并获取完整信息
-func (s *Soda) Parse(link string) (*model.Song, error) {
-	// 1. 提取 TrackID
-	// 支持格式: https://www.qishui.com/track/7132890123
-	re := regexp.MustCompile(`track/(\d+)`)
-	matches := re.FindStringSubmatch(link)
-	if len(matches) < 2 {
-		return nil, errors.New("invalid soda link")
-	}
-	trackID := matches[1]
-
-	// 2. 调用内部方法获取详情 (Metadata + DownloadInfo)
-	return s.fetchSongDetail(trackID)
-}
-
-// fetchSongDetail 内部方法：获取详情
-func (s *Soda) fetchSongDetail(trackID string) (*model.Song, error) {
-	params := url.Values{}
-	params.Set("track_id", trackID)
-	params.Set("media_type", "track")
-
-	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
-	v2Body, err := utils.Get(v2URL,
-		utils.WithHeader("User-Agent", UserAgent),
-		utils.WithHeader("Cookie", s.cookie),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var v2Resp struct {
-		TrackInfo struct {
-			ID       string `json:"id"`
-			Name     string `json:"name"`
-			Duration int    `json:"duration"`
-			Artists  []struct {
-				Name string `json:"name"`
-			} `json:"artists"`
-			Album struct {
-				Name     string `json:"name"`
-				UrlCover struct {
-					Urls []string `json:"urls"`
-					Uri  string   `json:"uri"`
-				} `json:"url_cover"`
-			} `json:"album"`
-		} `json:"track_info"`
-		TrackPlayer struct {
-			URLPlayerInfo string `json:"url_player_info"`
-		} `json:"track_player"`
-	}
-	if err := json.Unmarshal(v2Body, &v2Resp); err != nil {
-		return nil, fmt.Errorf("parse track_v2 response error: %w", err)
-	}
-
-	if v2Resp.TrackInfo.ID == "" {
-		return nil, errors.New("track info not found")
-	}
-
-	// 构造基本 Song
-	info := v2Resp.TrackInfo
-	var artistNames []string
-	for _, ar := range info.Artists {
-		artistNames = append(artistNames, ar.Name)
-	}
-
-	var cover string
-	if len(info.Album.UrlCover.Urls) > 0 {
-		domain := info.Album.UrlCover.Urls[0]
-		uri := info.Album.UrlCover.Uri
-		if domain != "" && uri != "" {
-			cover = domain + uri + "~c5_375x375.jpg"
-		}
-	}
-
-	song := &model.Song{
-		Source:   "soda",
-		ID:       info.ID,
-		Name:     info.Name,
-		Artist:   strings.Join(artistNames, "、"),
-		Album:    info.Album.Name,
-		Duration: info.Duration / 1000,
-		Cover:    cover,
-		Link:     fmt.Sprintf("https://www.qishui.com/track/%s", info.ID),
-		Extra: map[string]string{
-			"track_id": info.ID,
-		},
-	}
-
-	// 尝试获取 URL
-	// 这里不直接调用 GetDownloadInfo，因为 v2Resp 已经包含了 url_player_info，可以减少一次 API 调用
-	if v2Resp.TrackPlayer.URLPlayerInfo != "" {
-		dInfo, err := s.fetchPlayerInfo(v2Resp.TrackPlayer.URLPlayerInfo)
-		if err == nil {
-			song.URL = dInfo.URL + "#auth=" + url.QueryEscape(dInfo.PlayAuth)
-			song.Size = dInfo.Size
-			song.Ext = dInfo.Format
-			if song.Duration > 0 && dInfo.Size > 0 {
-				song.Bitrate = int(dInfo.Size * 8 / 1000 / int64(song.Duration))
-			}
-		}
-	}
-
-	return song, nil
-}
-
-type DownloadInfo struct {
-	URL      string
-	PlayAuth string
-	Format   string
-	Size     int64
+	return pl, songs, nil
 }
 
 // GetDownloadInfo 获取下载信息
 func (s *Soda) GetDownloadInfo(song *model.Song) (*DownloadInfo, error) {
+	if strings.Contains(song.URL, "#auth=") {
+		parts := strings.Split(song.URL, "#auth=")
+		if len(parts) == 2 {
+			auth, _ := url.QueryUnescape(parts[1])
+			return &DownloadInfo{
+				URL:      parts[0],
+				PlayAuth: auth,
+				Format:   song.Ext,
+				Size:     song.Size,
+			}, nil
+		}
+	}
+
 	if song.Source != "soda" {
 		return nil, errors.New("source mismatch")
 	}
@@ -545,6 +473,9 @@ func (s *Soda) GetDownloadInfo(song *model.Song) (*DownloadInfo, error) {
 	params := url.Values{}
 	params.Set("track_id", trackID)
 	params.Set("media_type", "track")
+	params.Set("aid", "386088")
+	params.Set("device_platform", "web")
+	params.Set("channel", "pc_web")
 
 	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
 	v2Body, err := utils.Get(v2URL,
@@ -570,7 +501,13 @@ func (s *Soda) GetDownloadInfo(song *model.Song) (*DownloadInfo, error) {
 	return s.fetchPlayerInfo(v2Resp.TrackPlayer.URLPlayerInfo)
 }
 
-// fetchPlayerInfo 内部辅助：解析 url_player_info
+type DownloadInfo struct {
+	URL      string
+	PlayAuth string
+	Format   string
+	Size     int64
+}
+
 func (s *Soda) fetchPlayerInfo(playerInfoURL string) (*DownloadInfo, error) {
 	infoBody, err := utils.Get(playerInfoURL,
 		utils.WithHeader("User-Agent", UserAgent),
@@ -659,6 +596,7 @@ func (s *Soda) Download(song *model.Song, outputPath string) error {
 		return err
 	}
 
+	// [修改] DecryptAudio 现位于 crypto.go，但同属 package soda，可直接调用
 	decryptedData, err := DecryptAudio(encryptedData, info.PlayAuth)
 	if err != nil {
 		return fmt.Errorf("decrypt failed: %w", err)
@@ -671,240 +609,104 @@ func (s *Soda) Download(song *model.Song, outputPath string) error {
 	return nil
 }
 
-// DecryptAudio 解密逻辑
-func DecryptAudio(fileData []byte, playAuth string) ([]byte, error) {
-	hexKey, err := extractKey(playAuth)
-	if err != nil {
-		return nil, err
+// Parse 解析链接并获取完整信息
+func (s *Soda) Parse(link string) (*model.Song, error) {
+	re := regexp.MustCompile(`track/(\d+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, errors.New("invalid soda link")
 	}
-	keyBytes, err := hex.DecodeString(hexKey)
-	if err != nil {
-		return nil, err
-	}
+	trackID := matches[1]
+	return s.fetchSongDetail(trackID)
+}
 
-	moov, err := findBox(fileData, "moov", 0, len(fileData))
-	if err != nil {
-		return nil, errors.New("moov box not found")
-	}
+func (s *Soda) fetchSongDetail(trackID string) (*model.Song, error) {
+	params := url.Values{}
+	params.Set("track_id", trackID)
+	params.Set("media_type", "track")
+	params.Set("aid", "386088")
+	params.Set("device_platform", "web")
+	params.Set("channel", "pc_web")
 
-	stbl, err := findBox(fileData, "stbl", moov.offset, moov.offset+moov.size)
-	if err != nil {
-		trak, _ := findBox(fileData, "trak", moov.offset+8, moov.offset+moov.size)
-		if trak != nil {
-			mdia, _ := findBox(fileData, "mdia", trak.offset+8, trak.offset+trak.size)
-			if mdia != nil {
-				minf, _ := findBox(fileData, "minf", mdia.offset+8, mdia.offset+mdia.size)
-				if minf != nil {
-					stbl, _ = findBox(fileData, "stbl", minf.offset+8, minf.offset+minf.size)
-				}
-			}
-		}
-	}
-	if stbl == nil {
-		return nil, errors.New("stbl box not found")
-	}
-
-	stsz, err := findBox(fileData, "stsz", stbl.offset+8, stbl.offset+stbl.size)
-	if err != nil {
-		return nil, errors.New("stsz box not found")
-	}
-	sampleSizes := parseStsz(stsz.data)
-
-	senc, err := findBox(fileData, "senc", moov.offset+8, moov.offset+moov.size)
-	if err != nil {
-		senc, err = findBox(fileData, "senc", stbl.offset+8, stbl.offset+stbl.size)
-	}
-	if err != nil {
-		return nil, errors.New("senc box not found")
-	}
-	ivs := parseSenc(senc.data)
-
-	mdat, err := findBox(fileData, "mdat", 0, len(fileData))
-	if err != nil {
-		return nil, errors.New("mdat box not found")
-	}
-
-	block, err := aes.NewCipher(keyBytes)
+	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
+	v2Body, err := utils.Get(v2URL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Cookie", s.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	decryptedData := make([]byte, len(fileData))
-	copy(decryptedData, fileData)
-
-	readPtr := mdat.offset + 8
-	decryptedMdat := make([]byte, 0, mdat.size-8)
-
-	for i := 0; i < len(sampleSizes); i++ {
-		size := int(sampleSizes[i])
-		if readPtr+size > len(decryptedData) {
-			break
-		}
-		chunk := decryptedData[readPtr : readPtr+size]
-
-		if i < len(ivs) {
-			iv := ivs[i]
-			if len(iv) < 16 {
-				padded := make([]byte, 16)
-				copy(padded, iv)
-				iv = padded
-			}
-			stream := cipher.NewCTR(block, iv)
-			dst := make([]byte, size)
-			stream.XORKeyStream(dst, chunk)
-			decryptedMdat = append(decryptedMdat, dst...)
-		} else {
-			decryptedMdat = append(decryptedMdat, chunk...)
-		}
-		readPtr += size
+	var v2Resp struct {
+		TrackInfo struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Duration int    `json:"duration"`
+			Artists  []struct {
+				Name string `json:"name"`
+			} `json:"artists"`
+			Album struct {
+				Name     string `json:"name"`
+				UrlCover struct {
+					Urls []string `json:"urls"`
+					Uri  string   `json:"uri"`
+				} `json:"url_cover"`
+			} `json:"album"`
+		} `json:"track_info"`
+		TrackPlayer struct {
+			URLPlayerInfo string `json:"url_player_info"`
+		} `json:"track_player"`
+	}
+	if err := json.Unmarshal(v2Body, &v2Resp); err != nil {
+		return nil, fmt.Errorf("parse track_v2 response error: %w", err)
 	}
 
-	if len(decryptedMdat) == int(mdat.size)-8 {
-		copy(decryptedData[mdat.offset+8:], decryptedMdat)
-	} else {
-		return nil, errors.New("decrypted size mismatch")
+	if v2Resp.TrackInfo.ID == "" {
+		return nil, errors.New("track info not found")
 	}
 
-	stsd, err := findBox(fileData, "stsd", stbl.offset+8, stbl.offset+stbl.size)
-	if err == nil {
-		stsdOffset := stsd.offset
-		stsdData := decryptedData[stsdOffset : stsdOffset+stsd.size]
-		if idx := bytes.Index(stsdData, []byte("enca")); idx != -1 {
-			copy(stsdData[idx:], []byte("mp4a"))
-			copy(decryptedData[stsdOffset:], stsdData)
+	info := v2Resp.TrackInfo
+	var artistNames []string
+	for _, ar := range info.Artists {
+		artistNames = append(artistNames, ar.Name)
+	}
+
+	var cover string
+	if len(info.Album.UrlCover.Urls) > 0 {
+		domain := info.Album.UrlCover.Urls[0]
+		uri := info.Album.UrlCover.Uri
+		if domain != "" && uri != "" {
+			cover = domain + uri + "~c5_375x375.jpg"
 		}
 	}
 
-	return decryptedData, nil
-}
-
-type mp4Box struct {
-	offset int
-	size   int
-	data   []byte
-}
-
-func findBox(data []byte, boxType string, start, end int) (*mp4Box, error) {
-	if end > len(data) {
-		end = len(data)
+	song := &model.Song{
+		Source:   "soda",
+		ID:       info.ID,
+		Name:     info.Name,
+		Artist:   strings.Join(artistNames, "、"),
+		Album:    info.Album.Name,
+		Duration: info.Duration / 1000,
+		Cover:    cover,
+		Link:     fmt.Sprintf("https://www.qishui.com/track/%s", info.ID),
+		Extra: map[string]string{
+			"track_id": info.ID,
+		},
 	}
-	pos := start
-	target := []byte(boxType)
-	for pos+8 <= end {
-		size := int(binary.BigEndian.Uint32(data[pos : pos+4]))
-		if size < 8 {
-			break
-		}
-		if bytes.Equal(data[pos+4:pos+8], target) {
-			return &mp4Box{offset: pos, size: size, data: data[pos+8 : pos+size]}, nil
-		}
-		pos += size
-	}
-	return nil, errors.New("box not found")
-}
 
-func parseStsz(data []byte) []uint32 {
-	if len(data) < 12 {
-		return nil
-	}
-	sampleSizeFixed := binary.BigEndian.Uint32(data[4:8])
-	sampleCount := int(binary.BigEndian.Uint32(data[8:12]))
-	sizes := make([]uint32, sampleCount)
-	if sampleSizeFixed != 0 {
-		for i := 0; i < sampleCount; i++ {
-			sizes[i] = sampleSizeFixed
-		}
-	} else {
-		for i := 0; i < sampleCount; i++ {
-			if 12+i*4+4 <= len(data) {
-				sizes[i] = binary.BigEndian.Uint32(data[12+i*4 : 12+i*4+4])
+	if v2Resp.TrackPlayer.URLPlayerInfo != "" {
+		dInfo, err := s.fetchPlayerInfo(v2Resp.TrackPlayer.URLPlayerInfo)
+		if err == nil {
+			song.URL = dInfo.URL + "#auth=" + url.QueryEscape(dInfo.PlayAuth)
+			song.Size = dInfo.Size
+			song.Ext = dInfo.Format
+			if song.Duration > 0 && dInfo.Size > 0 {
+				song.Bitrate = int(dInfo.Size * 8 / 1000 / int64(song.Duration))
 			}
 		}
 	}
-	return sizes
-}
 
-func parseSenc(data []byte) [][]byte {
-	if len(data) < 8 {
-		return nil
-	}
-	flags := binary.BigEndian.Uint32(data[0:4]) & 0x00FFFFFF
-	sampleCount := int(binary.BigEndian.Uint32(data[4:8]))
-	ivs := make([][]byte, 0, sampleCount)
-	ptr := 8
-	hasSubsamples := (flags & 0x02) != 0
-	for i := 0; i < sampleCount; i++ {
-		if ptr+8 > len(data) {
-			break
-		}
-		ivs = append(ivs, data[ptr:ptr+8])
-		ptr += 8
-		if hasSubsamples {
-			if ptr+2 > len(data) {
-				break
-			}
-			subCount := int(binary.BigEndian.Uint16(data[ptr : ptr+2]))
-			ptr += 2 + (subCount * 6)
-		}
-	}
-	return ivs
-}
-
-func bitcount(n int) int {
-	u := uint32(n)
-	u = u & 0xFFFFFFFF
-	u = u - ((u >> 1) & 0x55555555)
-	u = (u & 0x33333333) + ((u >> 2) & 0x33333333)
-	return int((((u + (u >> 4)) & 0xF0F0F0F) * 0x1010101) >> 24)
-}
-
-func decodeBase36(c byte) int {
-	if c >= '0' && c <= '9' {
-		return int(c - '0')
-	}
-	if c >= 'a' && c <= 'z' {
-		return int(c - 'a' + 10)
-	}
-	return 0xFF
-}
-
-func decryptSpadeInner(keyBytes []byte) []byte {
-	result := make([]byte, len(keyBytes))
-	buff := append([]byte{0xFA, 0x55}, keyBytes...)
-	for i := 0; i < len(result); i++ {
-		v := int(keyBytes[i]^buff[i]) - bitcount(i) - 21
-		for v < 0 {
-			v += 255
-		}
-		result[i] = byte(v)
-	}
-	return result
-}
-
-func extractKey(playAuth string) (string, error) {
-	binaryStr, err := base64.StdEncoding.DecodeString(playAuth)
-	if err != nil {
-		return "", err
-	}
-	bytesData := []byte(binaryStr)
-	if len(bytesData) < 3 {
-		return "", errors.New("auth data too short")
-	}
-	paddingLen := int((bytesData[0] ^ bytesData[1] ^ bytesData[2]) - 48)
-	if len(bytesData) < paddingLen+2 {
-		return "", errors.New("invalid padding length")
-	}
-	innerInput := bytesData[1 : len(bytesData)-paddingLen]
-	tmpBuff := decryptSpadeInner(innerInput)
-	if len(tmpBuff) == 0 {
-		return "", errors.New("decryption failed")
-	}
-	skipBytes := decodeBase36(tmpBuff[0])
-	endIndex := 1 + (len(bytesData) - paddingLen - 2) - skipBytes
-	if endIndex > len(tmpBuff) || endIndex < 1 {
-		return "", errors.New("index out of bounds")
-	}
-	return string(tmpBuff[1:endIndex]), nil
+	return song, nil
 }
 
 // GetLyrics 获取歌词
@@ -921,6 +723,9 @@ func (s *Soda) GetLyrics(song *model.Song) (string, error) {
 	params := url.Values{}
 	params.Set("track_id", trackID)
 	params.Set("media_type", "track")
+	params.Set("aid", "386088")
+	params.Set("device_platform", "web")
+	params.Set("channel", "pc_web")
 
 	v2URL := "https://api.qishui.com/luna/pc/track_v2?" + params.Encode()
 	body, err := utils.Get(v2URL,
@@ -962,14 +767,11 @@ func parseSodaLyric(raw string) string {
 		if len(matches) >= 4 {
 			startTimeStr := matches[1]
 			content := matches[3]
-
 			cleanContent := wordRegex.ReplaceAllString(content, "")
-
 			startTime, _ := strconv.Atoi(startTimeStr)
 			minutes := startTime / 60000
 			seconds := (startTime % 60000) / 1000
 			millis := (startTime % 1000) / 10
-
 			sb.WriteString(fmt.Sprintf("[%02d:%02d.%02d]%s\n", minutes, seconds, millis, cleanContent))
 		}
 	}
