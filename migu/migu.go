@@ -141,19 +141,18 @@ func (m *Migu) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 
 // GetPlaylistSongs 获取歌单详情（解析歌曲列表）
 func (m *Migu) GetPlaylistSongs(id string) ([]model.Song, error) {
-	// 参考 Search 和 GetDownloadURL 的参数构造方式
+	// [修复] 使用 musicListContent.do 接口
+	// resourceinfo.do (类型2021) 只返回歌单简介，不返回歌曲列表
+	// musicListContent.do 才是获取列表内容的正确接口
 	params := url.Values{}
-	params.Set("playListId", id)
-	params.Set("resourceType", "2") // 2 代表歌单
+	params.Set("musicListId", id) // 参数名是 musicListId
 	params.Set("pageNo", "1")
-	params.Set("pageSize", "100") // 获取前100首
+	params.Set("pageSize", "100")
 
-	// [修改] 使用与 Search/GetDownloadURL 相同的域名 c.musicapp.migu.cn
-	// 接口路径为 /MIGUM2.0/v1.0/content/queryPlaylistById.do
-	apiURL := "http://c.musicapp.migu.cn/MIGUM2.0/v1.0/content/queryPlaylistById.do?" + params.Encode()
+	// 保持域名 c.musicapp.migu.cn 不变
+	apiURL := "http://c.musicapp.migu.cn/MIGUM2.0/v1.0/content/musicListContent.do?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
-		// 使用文件顶部定义的常量 Header
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Referer", Referer),
 		utils.WithHeader("Cookie", m.cookie),
@@ -162,25 +161,23 @@ func (m *Migu) GetPlaylistSongs(id string) ([]model.Song, error) {
 		return nil, err
 	}
 
-	// 调试用：如果还报错，取消注释查看返回内容
-	// os.WriteFile("migu_playlist_debug.json", body, 0644)
+	// 调试：查看 musicListContent 的返回
+	// os.WriteFile("migu_playlist_content.json", body, 0644)
 
-	// 定义响应结构 (针对 c.musicapp.migu.cn 的返回格式)
+	// 定义响应结构
 	var resp struct {
 		Code string `json:"code"`
 		Info string `json:"info"`
-		// 注意：这里是 ContentList 数组
+		// 核心列表：contentList
 		ContentList []struct {
-			SongList []struct {
-				ContentId   string `json:"contentId"`   // 歌曲ID (下载用)
-				SongId      string `json:"songId"`      // 歌曲ID (备用)
-				SongName    string `json:"songName"`
-				SingerName  string `json:"singerName"`
-				AlbumName   string `json:"albumName"`
-				PicM        string `json:"picM"`        // 封面
-				PicL        string `json:"picL"`        // 大封面
-				CopyrightId string `json:"copyrightId"` // 版权ID (网页链接用)
-			} `json:"songList"`
+			ContentId   string `json:"contentId"` // 核心资源ID (用于下载)
+			SongId      string `json:"songId"`    // 备用ID
+			SongName    string `json:"songName"`
+			SingerName  string `json:"singerName"`
+			AlbumName   string `json:"albumName"`
+			PicM        string `json:"picM"`        // 封面
+			PicL        string `json:"picL"`        // 大封面
+			CopyrightId string `json:"copyrightId"` // 版权ID
 		} `json:"contentList"`
 	}
 
@@ -193,13 +190,13 @@ func (m *Migu) GetPlaylistSongs(id string) ([]model.Song, error) {
 		return nil, fmt.Errorf("migu api error: %s (code %s)", resp.Info, resp.Code)
 	}
 
-	if len(resp.ContentList) == 0 || len(resp.ContentList[0].SongList) == 0 {
-		return nil, errors.New("playlist is empty or invalid")
+	if len(resp.ContentList) == 0 {
+		return nil, errors.New("playlist is empty")
 	}
 
 	var songs []model.Song
-	for _, item := range resp.ContentList[0].SongList {
-		// ID 选取逻辑：优先 contentId
+	for _, item := range resp.ContentList {
+		// ID 选取逻辑：优先 contentId (用于 resourceinfo.do 下载)
 		id := item.ContentId
 		if id == "" {
 			id = item.SongId
@@ -224,7 +221,7 @@ func (m *Migu) GetPlaylistSongs(id string) ([]model.Song, error) {
 			// 构造网页链接
 			Link: fmt.Sprintf("https://music.migu.cn/v3/music/song/%s", item.CopyrightId),
 			Extra: map[string]string{
-				"content_id":   id,
+				"content_id":   item.ContentId,
 				"copyright_id": item.CopyrightId,
 			},
 		})

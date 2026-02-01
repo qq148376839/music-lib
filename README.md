@@ -16,21 +16,19 @@ music-lib 是一个 Go 音乐搜索下载库，提供统一的音乐数据接口
 
 ## 支持的音乐平台
 
-| 平台       | 模块名    | 搜索 | 下载 | 歌词 | 链接解析 | 歌单搜索 | 歌单歌曲 | 备注           |
-|------------|-----------|------|------|------|----------|----------|----------|----------------|
-| 网易云音乐 | netease   | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        |                |
-| QQ 音乐    | qq        | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        |                |
-| 酷狗音乐   | kugou     | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        |                |
-| 酷我音乐   | kuwo      | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        |                |
-| 咪咕音乐   | migu      | ✅    | ✅    | ✅    | ❌        | ✅        | ❌        |                |
-| 千千音乐   | qianqian  | ✅    | ✅    | ✅    | ❌        | ❌        | ✅        |                |
-| 汽水音乐   | soda      | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        | 支持音频解密   |
-| 5sing      | fivesing  | ✅    | ✅    | ✅    | ✅        | ✅        | ✅        |                |
-| Jamendo    | jamendo   | ✅    | ✅    | ❌    | ✅        | ❌        | ❌        |                |
-| JOOX       | joox      | ✅    | ✅    | ✅    | ❌        | ✅        | ❌        |                |
-| Bilibili   | bilibili  | ✅    | ✅    | ❌    | ✅        | ❌        | ❌        | 暂未实现歌单功能 |
-
-我可以帮你把这个表格转换成**Python字典/枚举**格式，直接用于你的音乐下载工具开发，需要吗？
+| 平台       | 模块名   | 搜索 | 下载 | 歌词 | 链接解析 | 歌单搜索 | 歌单歌曲 | 备注             |
+| ---------- | -------- | ---- | ---- | ---- | -------- | -------- | -------- | ---------------- |
+| 网易云音乐 | netease  | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       |                  |
+| QQ 音乐    | qq       | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       |                  |
+| 酷狗音乐   | kugou    | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       |                  |
+| 酷我音乐   | kuwo     | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       |                  |
+| 咪咕音乐   | migu     | ✅   | ✅   | ✅   | ❌       | ✅       | ❌       |                  |
+| 千千音乐   | qianqian | ✅   | ✅   | ✅   | ❌       | ❌       | ✅       |                  |
+| 汽水音乐   | soda     | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       | 支持音频解密     |
+| 5sing      | fivesing | ✅   | ✅   | ✅   | ✅       | ✅       | ✅       |                  |
+| Jamendo    | jamendo  | ✅   | ✅   | ❌   | ✅       | ❌       | ❌       |                  |
+| JOOX       | joox     | ✅   | ✅   | ✅   | ❌       | ✅       | ❌       |                  |
+| Bilibili   | bilibili | ✅   | ✅   | ❌   | ✅       | ❌       | ❌       | 暂未实现歌单功能 |
 
 ## 快速开始
 
@@ -104,7 +102,7 @@ import (
 func main() {
 	// 解析网易云音乐分享链接
 	link := "https://music.163.com/#/song?id=123456"
-	
+
 	song, err := netease.Parse(link)
 	if err != nil {
 		log.Fatalf("解析失败: %v", err)
@@ -168,13 +166,13 @@ type Song struct {
 type MusicProvider interface {
 	// Search 搜索歌曲
 	Search(keyword string) ([]model.Song, error)
-	
+
 	// Parse 解析分享链接
 	Parse(link string) (*model.Song, error)
-	
+
 	// GetDownloadURL 获取下载链接
 	GetDownloadURL(s *model.Song) (string, error)
-	
+
 	// GetLyrics 获取歌词
 	GetLyrics(s *model.Song) (string, error)
 }
@@ -204,18 +202,18 @@ import (
 
 func main() {
 	keyword := "晴天"
-	
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var allSongs []model.Song
-	
+
 	// 并发搜索多个平台
 	searchFuncs := []func(string) ([]model.Song, error){
 		netease.Search,
 		qq.Search,
 		kugou.Search,
 	}
-	
+
 	for _, search := range searchFuncs {
 		wg.Add(1)
 		go func(fn func(string) ([]model.Song, error)) {
@@ -228,9 +226,9 @@ func main() {
 			}
 		}(search)
 	}
-	
+
 	wg.Wait()
-	
+
 	fmt.Printf("共找到 %d 首歌曲\n", len(allSongs))
 	for _, song := range allSongs {
 		fmt.Printf("- %s - %s (%s)\n", song.Artist, song.Name, song.Source)
