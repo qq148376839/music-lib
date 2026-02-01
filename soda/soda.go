@@ -181,11 +181,14 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			Data []struct {
 				Entity struct {
 					Playlist struct {
-						ID          string `json:"id"`
-						Title       string `json:"title"`
-						Desc        string `json:"desc"`
-						PublicName  string `json:"public_name"`
-						CountTracks int    `json:"count_tracks"` // Added count_tracks
+						ID    string `json:"id"`
+						Title string `json:"title"`
+						Desc  string `json:"desc"`
+						Owner struct {
+							Nickname   string `json:"nickname"`
+							PublicName string `json:"public_name"`
+						} `json:"owner"`
+						CountTracks int `json:"count_tracks"` // Added count_tracks
 						UrlCover    struct {
 							Urls []string `json:"urls"`
 							Uri  string   `json:"uri"`
@@ -224,13 +227,18 @@ func (s *Soda) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			}
 		}
 
+		creator := pl.Owner.PublicName
+		if creator == "" {
+			creator = pl.Owner.Nickname
+		}
+
 		playlists = append(playlists, model.Playlist{
 			Source:      "soda",
 			ID:          pl.ID,
 			Name:        pl.Title,
 			Cover:       cover,
 			TrackCount:  pl.CountTracks,
-			Creator:     pl.PublicName,
+			Creator:     creator,
 			Description: pl.Desc,
 			// [新增] 填充 Link 字段
 			Link: fmt.Sprintf("https://www.qishui.com/playlist/%s", pl.ID),

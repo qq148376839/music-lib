@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/utils"
@@ -130,33 +131,76 @@ func (f *Fivesing) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 		return nil, fmt.Errorf("fivesing playlist json parse error: %w", err)
 	}
 
-	var playlists []model.Playlist
-	for _, item := range resp.List {
+	playlists := make([]model.Playlist, len(resp.List))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // Limit concurrency
+
+	for i, item := range resp.List {
 		title := removeEmTags(html.UnescapeString(item.Title))
 		desc := removeEmTags(html.UnescapeString(item.Content))
 		if desc == "0" {
 			desc = ""
 		}
 
-		// 构造 Link: 5sing 歌单链接通常包含 userId 和 songListId
 		link := fmt.Sprintf("http://5sing.kugou.com/%s/dj/%s.html", item.UserId, item.SongListId)
+		creator := item.UserName
+		if creator == "" {
+			creator = "ID: " + item.UserId
+		}
 
-		playlists = append(playlists, model.Playlist{
+		playlists[i] = model.Playlist{
 			Source:      "fivesing",
 			ID:          item.SongListId,
 			Name:        title,
 			Cover:       item.Picture,
 			TrackCount:  item.SongCnt,
 			PlayCount:   item.PlayCount,
-			Creator:     item.UserName,
+			Creator:     creator,
 			Description: desc,
 			Link:        link,
 			Extra: map[string]string{
 				"user_id": item.UserId,
 			},
-		})
+		}
+
+		// Parallel fetch for creator name if missing
+		if item.UserName == "" && item.SongListId != "" {
+			wg.Add(1)
+			go func(idx int, plID string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				// Call fetchPlaylistInfo (lightweight version of fetchPlaylistDetail)
+				if name, err := f.fetchCreatorName(plID); err == nil && name != "" {
+					playlists[idx].Creator = name
+				}
+			}(i, item.SongListId)
+		}
 	}
+	wg.Wait()
+
 	return playlists, nil
+}
+
+// fetchCreatorName Helper to get creator name from getsonglist API
+func (f *Fivesing) fetchCreatorName(id string) (string, error) {
+	infoURL := fmt.Sprintf("http://mobileapi.5sing.kugou.com/song/getsonglist?id=%s&songfields=user", id)
+	infoBody, err := utils.Get(infoURL, utils.WithHeader("User-Agent", UserAgent))
+	if err != nil {
+		return "", err
+	}
+	var infoResp struct {
+		Data struct {
+			User struct {
+				UserName string `json:"NN"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(infoBody, &infoResp); err != nil {
+		return "", err
+	}
+	return infoResp.Data.User.UserName, nil
 }
 
 // GetPlaylistSongs 获取歌单详情 (仅返回歌曲)
