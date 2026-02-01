@@ -38,6 +38,7 @@ type Playlist struct {
 	Creator     string `json:"creator"`
 	Description string `json:"description"`
 	Source      string `json:"source"`
+	Link        string `json:"link"`
 
 	// [新增] 用于存储源特有的元数据，避免在 ID 中拼接字符串
 	Extra map[string]string `json:"extra,omitempty"`

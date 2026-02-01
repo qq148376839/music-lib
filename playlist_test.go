@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/guohuiyuan/music-lib/fivesing"
+	"github.com/guohuiyuan/music-lib/joox"
 	"github.com/guohuiyuan/music-lib/kugou"
 	"github.com/guohuiyuan/music-lib/kuwo"
 	"github.com/guohuiyuan/music-lib/migu"
@@ -31,7 +32,7 @@ func TestSearchPlaylistOnly(t *testing.T) {
 		{"migu", "抖音", migu.SearchPlaylist},
 		// {"qianqian", "抖音", qianqian.SearchPlaylist},
 		// {"jamendo", "Rock", jamendo.SearchPlaylist}, // Jamendo 推荐搜英文
-		// {"joox", "陈奕迅", joox.SearchPlaylist},
+		{"joox", "周杰伦", joox.SearchPlaylist},
 		{"soda", "热歌", soda.SearchPlaylist},
 	}
 
@@ -78,7 +79,7 @@ func TestGetPlaylistSongsOnly(t *testing.T) {
 		// {"migu", "230478123", "migu", migu.GetPlaylistSongs},
 		{"qianqian", "295013", "qianqian", qianqian.GetPlaylistSongs},
 		// {"jamendo", "500556272", "jamendo", jamendo.GetPlaylistSongs},
-		// {"joox", "88ecb5d8481353c7a7267425203303d2", "joox", joox.GetPlaylistSongs},
+		// {"joox", "R6xNcB2vXn8Bx3dtKMkdow==", "joox", joox.GetPlaylistSongs},
 		{"soda", "7189963287731093516", "soda", soda.GetPlaylistSongs},
 	}
 

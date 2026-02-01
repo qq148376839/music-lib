@@ -131,148 +131,211 @@ func (j *Joox) Search(keyword string) ([]model.Song, error) {
 // SearchPlaylist 搜索歌单
 func (j *Joox) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params := url.Values{}
-	params.Set("country", "hk")
+	params.Set("country", "sg")
 	params.Set("lang", "zh_cn")
-	params.Set("search_input", keyword)
-	params.Set("sin", "0")
-	params.Set("ein", "10")
-	params.Set("type", "3") // type 3 代表歌单 (playlist)
-
-	apiURL := "http://api.joox.com/web-fcgi-bin/kugou_search?" + params.Encode()
+	params.Set("keyword", keyword)
+	apiURL := "https://cache.api.joox.com/openjoox/v3/search?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Cookie", j.cookie),
+		utils.WithHeader("X-Forwarded-For", XForwardedFor),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// Joox API 经常返回非标准 JSON，例如 {itemlist:[...]} 而没有引号
-	// 或者返回 Base64 编码的 data。
-	// 但 kugou_search 这个旧接口通常返回标准 JSON。
+	// Update struct to match joox_playlist_search.json structure
 	var resp struct {
-		Items []struct {
-			PlayListID   string `json:"playlist_id"`
-			PlayListName string `json:"playlist_name"`
-			Intro        string `json:"intro"`
-			Cover        string `json:"cover_url"`
-			TrackCount   int    `json:"track_count"`
-			CreatorName  string `json:"creator_name"`
-		} `json:"itemlist"`
+		SectionList []struct {
+			SectionTitle string `json:"section_title"`
+			SectionType  int    `json:"section_type"`
+			ItemList     []struct {
+				Type           int `json:"type"` // 1: Editor Playlist, 2: Album, 5: Song
+				EditorPlaylist struct {
+					ID     string `json:"id"`
+					Name   string `json:"name"`
+					Images []struct {
+						Width int    `json:"width"`
+						URL   string `json:"url"`
+					} `json:"images"`
+				} `json:"editor_playlist"`
+			} `json:"item_list"`
+		} `json:"section_list"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		// 备选方案：如果返回的是 jsonp，去除 callback
-		s := string(body)
-		if idx := strings.Index(s, "("); idx > -1 {
-			s = strings.TrimSuffix(strings.TrimPrefix(s[idx+1:], ""), ")")
-			if err2 := json.Unmarshal([]byte(s), &resp); err2 != nil {
-				return nil, fmt.Errorf("joox playlist json parse error: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("joox playlist json parse error: %w", err)
-		}
+		return nil, fmt.Errorf("joox search playlist json error: %w", err)
 	}
 
 	var playlists []model.Playlist
-	for _, item := range resp.Items {
-		// Base64 解码歌名等 (Joox 有时会 Base64 编码字段)
-		// 但这个接口通常是明文。如果发现乱码，需要在这里 base64 decode item.PlayListName
+	for _, section := range resp.SectionList {
+		for _, item := range section.ItemList {
+			// According to the JSON, Type 1 is a playlist (Editor Playlist)
+			// We skip Albums (Type 2) or Songs (Type 5)
+			if item.Type != 1 {
+				continue
+			}
 
-		playlists = append(playlists, model.Playlist{
-			Source:      "joox",
-			ID:          item.PlayListID,
-			Name:        item.PlayListName,
-			Cover:       item.Cover,
-			TrackCount:  item.TrackCount,
-			Creator:     item.CreatorName,
-			Description: item.Intro,
-		})
+			info := item.EditorPlaylist
+			if info.ID == "" {
+				continue
+			}
+
+			// Image selection logic: prioritize 300px, fallback to first available
+			var cover string
+			for _, img := range info.Images {
+				if img.Width == 300 {
+					cover = img.URL
+					break
+				}
+			}
+			if cover == "" && len(info.Images) > 0 {
+				cover = info.Images[0].URL
+			}
+
+			// Generate the public link
+			link := fmt.Sprintf("https://www.joox.com/hk/playlist/%s", info.ID)
+
+			// Populate the Playlist model
+			playlists = append(playlists, model.Playlist{
+				Source: "joox", // Essential for universal player logic
+				ID:     info.ID,
+				Name:   info.Name,
+				Cover:  cover,
+				Link:   link,
+
+				// Fields not provided in the Search API response (JSON):
+				// TrackCount:  0,
+				// PlayCount:   0,
+				// Creator:     "",
+				// Description: "",
+
+				// Optional: Store raw ID in Extra if needed for specific logic later
+				Extra: map[string]string{
+					"playlist_id": info.ID,
+				},
+			})
+		}
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs 获取歌单详情
+// GetPlaylistSongs 获取歌单详情 (Updated to use OpenJoox v3 API)
 func (j *Joox) GetPlaylistSongs(id string) ([]model.Song, error) {
 	params := url.Values{}
-	params.Set("playlistid", id)
-	params.Set("country", "hk")
+	// The new v3 API uses "id" instead of "playlistid"
+	params.Set("id", id)
+	params.Set("country", "sg")
 	params.Set("lang", "zh_cn")
-	params.Set("from_type", "-1")
 
-	apiURL := "http://api.joox.com/web-fcgi-bin/nk_get_playlist_details?" + params.Encode()
+	// Use the same host/path structure as Search
+	// Guessing the endpoint is /playlist based on /search pattern
+	apiURL := "https://cache.api.joox.com/openjoox/v3/playlist?" + params.Encode()
 
 	body, err := utils.Get(apiURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Cookie", j.cookie),
+		utils.WithHeader("X-Forwarded-For", XForwardedFor),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// 同样的，可能是 JSONP 格式
-	s := string(body)
-	if strings.HasPrefix(s, "updatePlaylistDetail") {
-		start := strings.Index(s, "(")
-		end := strings.LastIndex(s, ")")
-		if start != -1 && end != -1 {
-			s = s[start+1 : end]
-		}
-	}
-
-	// 定义响应结构
+	// We reuse the generic "Section" structure from the Search API
+	// because modern Joox APIs (v3) return "Pages" composed of "Sections".
 	var resp struct {
-		Name   string `json:"name"`
-		Tracks []struct {
-			ID         string `json:"songid"`
-			Name       string `json:"songname"`
-			AlbumName  string `json:"albumname"`
-			ArtistList []struct {
-				Name string `json:"name"`
-			} `json:"artist_list"`
-			AlbumID    string `json:"albumid"`
-			Duration   int    `json:"playtime"`  // 秒
-			AlbumCover string `json:"album_url"` // 有时为空
-		} `json:"tracks"`
+		SectionList []struct {
+			ItemList []struct {
+				Type int `json:"type"` // We look for Type 5 (Song)
+				Song []struct {
+					SongInfo struct {
+						ID         string `json:"id"`
+						Name       string `json:"name"`
+						AlbumName  string `json:"album_name"`
+						AlbumID    string `json:"album_id"`
+						ArtistList []struct {
+							Name string `json:"name"`
+						} `json:"artist_list"`
+						PlayDuration int `json:"play_duration"`
+						Images       []struct {
+							Width int    `json:"width"`
+							URL   string `json:"url"`
+						} `json:"images"`
+						VipFlag int `json:"vip_flag"`
+					} `json:"song_info"`
+				} `json:"song"`
+			} `json:"item_list"`
+		} `json:"section_list"`
 	}
 
-	if err := json.Unmarshal([]byte(s), &resp); err != nil {
-		return nil, fmt.Errorf("joox playlist detail json error: %w", err)
-	}
-
-	if len(resp.Tracks) == 0 {
-		return nil, errors.New("playlist is empty or invalid")
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("joox playlist json error: %w", err)
 	}
 
 	var songs []model.Song
-	for _, item := range resp.Tracks {
-		var artists []string
-		for _, a := range item.ArtistList {
-			artists = append(artists, a.Name)
-		}
+	foundSongs := false
 
-		// 封面处理
-		cover := item.AlbumCover
-		if cover == "" && item.AlbumID != "0" {
-			cover = fmt.Sprintf("https://img.jooxcdn.com/album/%s/%s/%s.jpg",
-				item.AlbumID[len(item.AlbumID)-2:], item.AlbumID[len(item.AlbumID)-1:], item.AlbumID)
-		}
+	// Iterate through all sections to find songs
+	for _, section := range resp.SectionList {
+		for _, item := range section.ItemList {
+			// Type 5 corresponds to Songs in the v3 API (as seen in your search json)
+			if item.Type == 5 {
+				for _, songItem := range item.Song {
+					info := songItem.SongInfo
+					if info.ID == "" {
+						continue
+					}
 
-		songs = append(songs, model.Song{
-			Source:   "joox",
-			ID:       item.ID,
-			Name:     item.Name,
-			Artist:   strings.Join(artists, "、"),
-			Album:    item.AlbumName,
-			Duration: item.Duration,
-			Cover:    cover,
-			Link:     fmt.Sprintf("https://www.joox.com/hk/single/%s", item.ID),
-			Extra: map[string]string{
-				"songid": item.ID,
-			},
-		})
+					var artistNames []string
+					for _, ar := range info.ArtistList {
+						artistNames = append(artistNames, ar.Name)
+					}
+
+					var cover string
+					for _, img := range info.Images {
+						if img.Width == 300 {
+							cover = img.URL
+							break
+						}
+					}
+					if cover == "" && len(info.Images) > 0 {
+						cover = info.Images[0].URL
+					}
+
+					// Fallback for missing cover using AlbumID if available
+					if cover == "" && info.AlbumID != "" {
+						// Standard Joox album cover pattern
+						cover = fmt.Sprintf("https://imgcache.joox.com/music/joox/photo/mid_album_300/%s/%s/%s.jpg",
+							info.AlbumID[len(info.AlbumID)-2:],
+							info.AlbumID[len(info.AlbumID)-1:],
+							info.AlbumID)
+					}
+
+					songs = append(songs, model.Song{
+						Source:   "joox",
+						ID:       info.ID,
+						Name:     info.Name,
+						Artist:   strings.Join(artistNames, "、"),
+						Album:    info.AlbumName,
+						Duration: info.PlayDuration,
+						Cover:    cover,
+						Link:     fmt.Sprintf("https://www.joox.com/hk/single/%s", info.ID),
+						Extra: map[string]string{
+							"songid": info.ID,
+						},
+					})
+					foundSongs = true
+				}
+			}
+		}
 	}
+
+	if !foundSongs {
+		// If no songs found, the ID might be invalid or the playlist is empty
+		return nil, errors.New("no songs found in playlist or invalid playlist ID")
+	}
+
 	return songs, nil
 }
 

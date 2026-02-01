@@ -16,18 +16,18 @@ import (
 )
 
 const (
-	UserAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
-	Referer           = "https://www.jamendo.com/search?q=musicdl"
-	XJamVersion       = "4gvfvv"
-	SearchAPI         = "https://www.jamendo.com/api/search"
-	SearchApiPath     = "/api/search" 
-	TrackAPI          = "https://www.jamendo.com/api/tracks" 
-	TrackApiPath      = "/api/tracks" 
-	PlaylistAPI       = "https://www.jamendo.com/api/playlists"
-	PlaylistApiPath   = "/api/playlists"
-	PlaylistTracksAPI = "https://www.jamendo.com/api/playlists/tracks"
-	PlaylistTracksPath= "/api/playlists/tracks"
-	ClientID = "9873ff31"
+	UserAgent          = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
+	Referer            = "https://www.jamendo.com/search?q=musicdl"
+	XJamVersion        = "4gvfvv"
+	SearchAPI          = "https://www.jamendo.com/api/search"
+	SearchApiPath      = "/api/search"
+	TrackAPI           = "https://www.jamendo.com/api/tracks"
+	TrackApiPath       = "/api/tracks"
+	PlaylistAPI        = "https://www.jamendo.com/api/playlists"
+	PlaylistApiPath    = "/api/playlists"
+	PlaylistTracksAPI  = "https://www.jamendo.com/api/playlists/tracks"
+	PlaylistTracksPath = "/api/playlists/tracks"
+	ClientID           = "9873ff31"
 )
 
 type Jamendo struct {
@@ -41,11 +41,13 @@ func New(cookie string) *Jamendo {
 var defaultJamendo = New("")
 
 func Search(keyword string) ([]model.Song, error) { return defaultJamendo.Search(keyword) }
-func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultJamendo.SearchPlaylist(keyword) } // [新增]
-func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultJamendo.GetPlaylistSongs(id) }       // [新增]
-func GetDownloadURL(s *model.Song) (string, error) { return defaultJamendo.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error) { return defaultJamendo.GetLyrics(s) }
-func Parse(link string) (*model.Song, error) { return defaultJamendo.Parse(link) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	return defaultJamendo.SearchPlaylist(keyword)
+}                                                      // [新增]
+func GetPlaylistSongs(id string) ([]model.Song, error) { return defaultJamendo.GetPlaylistSongs(id) } // [新增]
+func GetDownloadURL(s *model.Song) (string, error)     { return defaultJamendo.GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)          { return defaultJamendo.GetLyrics(s) }
+func Parse(link string) (*model.Song, error)           { return defaultJamendo.Parse(link) }
 
 // Search 搜索歌曲
 func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
@@ -73,9 +75,17 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 		ID       int    `json:"id"`
 		Name     string `json:"name"`
 		Duration int    `json:"duration"`
-		Artist   struct { Name string `json:"name"` } `json:"artist"`
-		Album    struct { Name string `json:"name"` } `json:"album"`
-		Cover    struct { Big struct { Size300 string `json:"size300"` } `json:"big"` } `json:"cover"`
+		Artist   struct {
+			Name string `json:"name"`
+		} `json:"artist"`
+		Album struct {
+			Name string `json:"name"`
+		} `json:"album"`
+		Cover struct {
+			Big struct {
+				Size300 string `json:"size300"`
+			} `json:"big"`
+		} `json:"cover"`
 		Download map[string]string `json:"download"`
 		Stream   map[string]string `json:"stream"`
 	}
@@ -86,11 +96,17 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 	var songs []model.Song
 	for _, item := range results {
 		streams := item.Download
-		if len(streams) == 0 { streams = item.Stream }
-		if len(streams) == 0 { continue }
+		if len(streams) == 0 {
+			streams = item.Stream
+		}
+		if len(streams) == 0 {
+			continue
+		}
 
 		downloadURL, ext := pickBestQuality(streams)
-		if downloadURL == "" { continue }
+		if downloadURL == "" {
+			continue
+		}
 
 		songs = append(songs, model.Song{
 			Source:   "jamendo",
@@ -110,130 +126,132 @@ func (j *Jamendo) Search(keyword string) ([]model.Song, error) {
 	}
 	return songs, nil
 }
-// SearchPlaylist 搜索歌单
+
+// SearchPlaylist 搜索歌单 (Updated to use internal API)
 func (j *Jamendo) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	params := url.Values{}
-	params.Set("namesearch", keyword)
-	params.Set("v", "3.0")
-	params.Set("format", "json")
-	params.Set("client_id", ClientID)
-	params.Set("limit", "10")
-	params.Set("order", "creationdate_desc")
+	params.Set("query", keyword)   // Same parameter as Search
+	params.Set("type", "playlist") // Change type to playlist
+	params.Set("limit", "20")
+	params.Set("identities", "www")
 
-	// 使用 v3.0 公共 API
-	apiURL := "https://api.jamendo.com/v3.0/playlists/?" + params.Encode()
+	apiURL := SearchAPI + "?" + params.Encode()
+	xJamCall := makeXJamCall(SearchApiPath)
 
-	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("x-jam-call", xJamCall),
+		utils.WithHeader("x-jam-version", XJamVersion),
+		utils.WithHeader("x-requested-with", "XMLHttpRequest"),
+		utils.WithHeader("Cookie", j.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp struct {
-		Headers struct {
-			Status string `json:"status"`
-			Code   int    `json:"code"`
-		} `json:"headers"`
-		Results []struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Creation  string `json:"creationdate"`
-			UserID    string `json:"user_id"`
-			UserName  string `json:"user_name"`
-			ShareURL  string `json:"shareurl"`
-			// Jamendo 歌单搜索列表不直接返回封面，需后续处理或用默认图
-		} `json:"results"`
+	// Internal API Playlist structure
+	var results []struct {
+		ID       int    `json:"id"`
+		Name     string `json:"name"`
+		UserName string `json:"user_name"` // Creator
+		Image    string `json:"image"`     // Cover URL
 	}
 
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("jamendo playlist json parse error: %w", err)
 	}
 
-	if resp.Headers.Status != "success" {
-		return nil, fmt.Errorf("jamendo api error: %s", resp.Headers.Status)
-	}
-
 	var playlists []model.Playlist
-	for _, item := range resp.Results {
+	for _, item := range results {
 		playlists = append(playlists, model.Playlist{
-			Source:      "jamendo",
-			ID:          item.ID,
-			Name:        item.Name,
-			Creator:     item.UserName,
-			Description: fmt.Sprintf("Created: %s", item.Creation),
-			// Jamendo 歌单列表 API 不返回封面，留空或使用占位
-			Cover:       "", 
-			TrackCount:  0, // 列表接口未返回歌曲数
+			Source:  "jamendo",
+			ID:      strconv.Itoa(item.ID),
+			Name:    item.Name,
+			Creator: item.UserName,
+			Cover:   item.Image,
+			Link:    fmt.Sprintf("https://www.jamendo.com/playlist/%d", item.ID),
 		})
 	}
 	return playlists, nil
 }
 
-// GetPlaylistSongs 获取歌单详情
+// GetPlaylistSongs 获取歌单详情 (Updated to use internal API)
 func (j *Jamendo) GetPlaylistSongs(id string) ([]model.Song, error) {
 	params := url.Values{}
 	params.Set("id", id)
-	params.Set("v", "3.0")
-	params.Set("format", "json")
-	params.Set("client_id", ClientID)
-	params.Set("limit", "100") // 获取前100首
 
-	// 注意：这里用的是 /playlists/tracks 接口
-	apiURL := "https://api.jamendo.com/v3.0/playlists/tracks?" + params.Encode()
+	apiURL := PlaylistTracksAPI + "?" + params.Encode()
+	xJamCall := makeXJamCall(PlaylistTracksPath)
 
-	body, err := utils.Get(apiURL, utils.WithHeader("User-Agent", UserAgent))
+	body, err := utils.Get(apiURL,
+		utils.WithHeader("User-Agent", UserAgent),
+		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("x-jam-call", xJamCall),
+		utils.WithHeader("x-jam-version", XJamVersion),
+		utils.WithHeader("x-requested-with", "XMLHttpRequest"),
+		utils.WithHeader("Cookie", j.cookie),
+	)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp struct {
-		Headers struct {
-			Status string `json:"status"`
-		} `json:"headers"`
-		Results []struct {
-			ID     string `json:"id"` // 歌单 ID
-			Tracks []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Duration string `json:"duration"` // Jamendo v3 返回的是字符串秒数
-				Artist   string `json:"artist_name"`
-				Album    string `json:"album_name"`
-				Image    string `json:"image"`    // 封面
-				Audio    string `json:"audio"`    // 试听链接 (通常也就是下载链接)
-				Audiodl  string `json:"audiodl"`  // 强制下载链接
-			} `json:"tracks"`
-		} `json:"results"`
+	// Internal API returns a list of standard track objects
+	var results []struct {
+		ID       int    `json:"id"`
+		Name     string `json:"name"`
+		Duration int    `json:"duration"`
+		Artist   struct {
+			Name string `json:"name"`
+		} `json:"artist"`
+		Album struct {
+			Name string `json:"name"`
+		} `json:"album"`
+		Cover struct {
+			Big struct {
+				Size300 string `json:"size300"`
+			} `json:"big"`
+		} `json:"cover"`
+		Download map[string]string `json:"download"`
+		Stream   map[string]string `json:"stream"`
 	}
 
-	if err := json.Unmarshal(body, &resp); err != nil {
+	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("jamendo playlist tracks json error: %w", err)
 	}
 
-	if len(resp.Results) == 0 || len(resp.Results[0].Tracks) == 0 {
+	if len(results) == 0 {
 		return nil, errors.New("playlist is empty or invalid")
 	}
 
 	var songs []model.Song
-	for _, item := range resp.Results[0].Tracks {
-		dur, _ := strconv.Atoi(item.Duration)
-		
-		// 优先使用 audio 字段 (mp3流)
-		url := item.Audio
-		if url == "" {
-			url = item.Audiodl
+	for _, item := range results {
+		streams := item.Download
+		if len(streams) == 0 {
+			streams = item.Stream
+		}
+		if len(streams) == 0 {
+			continue
+		}
+
+		downloadURL, ext := pickBestQuality(streams)
+		if downloadURL == "" {
+			continue
 		}
 
 		songs = append(songs, model.Song{
 			Source:   "jamendo",
-			ID:       item.ID,
+			ID:       strconv.Itoa(item.ID),
 			Name:     item.Name,
-			Artist:   item.Artist,
-			Album:    item.Album,
-			Duration: dur,
-			Cover:    item.Image,
-			URL:      url, // Jamendo 接口直接返回播放链接，可直接赋值
-			Link:     fmt.Sprintf("https://www.jamendo.com/track/%s", item.ID),
+			Artist:   item.Artist.Name,
+			Album:    item.Album.Name,
+			Duration: item.Duration,
+			Ext:      ext,
+			Cover:    item.Cover.Big.Size300,
+			URL:      downloadURL,
+			Link:     fmt.Sprintf("https://www.jamendo.com/track/%d", item.ID),
 			Extra: map[string]string{
-				"track_id": item.ID,
+				"track_id": strconv.Itoa(item.ID),
 			},
 		})
 	}
@@ -299,16 +317,24 @@ func (j *Jamendo) getTrackByID(id string) (*model.Song, error) {
 	}
 
 	var results []struct {
-		ID       int               `json:"id"`
-		Name     string            `json:"name"`
-		Duration int               `json:"duration"`
-		Artist   struct{ Name string `json:"name"` } `json:"artist"`
-		Album    struct{ Name string `json:"name"` } `json:"album"`
-		Cover    struct{ Big struct{ Size300 string `json:"size300"` } `json:"big"` } `json:"cover"`
+		ID       int    `json:"id"`
+		Name     string `json:"name"`
+		Duration int    `json:"duration"`
+		Artist   struct {
+			Name string `json:"name"`
+		} `json:"artist"`
+		Album struct {
+			Name string `json:"name"`
+		} `json:"album"`
+		Cover struct {
+			Big struct {
+				Size300 string `json:"size300"`
+			} `json:"big"`
+		} `json:"cover"`
 		Download map[string]string `json:"download"`
 		Stream   map[string]string `json:"stream"`
 	}
-	
+
 	if err := json.Unmarshal(body, &results); err != nil {
 		return nil, fmt.Errorf("jamendo track json error: %w", err)
 	}
@@ -345,9 +371,15 @@ func (j *Jamendo) getTrackByID(id string) (*model.Song, error) {
 }
 
 func pickBestQuality(streams map[string]string) (string, string) {
-	if url := streams["flac"]; url != "" { return url, "flac" }
-	if url := streams["mp3"]; url != "" { return url, "mp3" }
-	if url := streams["ogg"]; url != "" { return url, "ogg" }
+	if url := streams["flac"]; url != "" {
+		return url, "flac"
+	}
+	if url := streams["mp3"]; url != "" {
+		return url, "mp3"
+	}
+	if url := streams["ogg"]; url != "" {
+		return url, "ogg"
+	}
 	return "", ""
 }
 
