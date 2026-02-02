@@ -26,6 +26,9 @@ type Song struct {
 
 	// 用于存储源特有的元数据，避免解析 ID
 	Extra map[string]string `json:"extra,omitempty"`
+
+	// [新增] 标记歌曲是否无效 (经过 Probe 探测后)
+	IsInvalid bool `json:"is_invalid,omitempty"`
 }
 
 // Playlist 是所有音乐源通用的歌单结构 [修改]
