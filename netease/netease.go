@@ -18,7 +18,7 @@ const (
 	SearchAPI   = "http://music.163.com/api/linux/forward"
 	DownloadAPI = "http://music.163.com/weapi/song/enhance/player/url"
 	DetailAPI   = "https://music.163.com/weapi/v3/song/detail"
-	PlaylistAPI = "https://music.163.com/weapi/v3/playlist/detail" // [新增] 歌单详情接口
+	PlaylistAPI = "https://music.163.com/weapi/v3/playlist/detail"
 )
 
 type Netease struct {
@@ -34,7 +34,7 @@ func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultNe
 func GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 	return defaultNetease.GetPlaylistSongs(playlistID)
 }
-func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) { // [新增]
+func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
 	return defaultNetease.ParsePlaylist(link)
 }
 func GetDownloadURL(s *model.Song) (string, error) { return defaultNetease.GetDownloadURL(s) }
@@ -86,12 +86,13 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 
 	var songs []model.Song
 	for _, item := range resp.Result.Songs {
-		// 简单的过滤逻辑，可根据需要调整
+		// 简单过滤无版权或收费歌曲 (Privilege.Fl == 0)
 		if item.Privilege.Fl == 0 {
 			continue
 		}
 
 		var size int64
+		// 优先选择高音质大小
 		if item.Privilege.Fl >= 320000 && item.H.Size > 0 {
 			size = item.H.Size
 		} else if item.Privilege.Fl >= 192000 && item.M.Size > 0 {
@@ -132,7 +133,6 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 
 // SearchPlaylist 搜索歌单
 func (n *Netease) SearchPlaylist(keyword string) ([]model.Playlist, error) {
-	// type=1000 代表歌单
 	eparams := map[string]interface{}{
 		"method": "POST",
 		"url":    "http://music.163.com/api/cloudsearch/pc",
@@ -185,8 +185,7 @@ func (n *Netease) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			PlayCount:   item.PlayCount,
 			Creator:     item.Creator.Nickname,
 			Description: item.Description,
-			// [修改] 填充 Link 字段
-			Link: fmt.Sprintf("https://music.163.com/#/playlist?id=%d", item.ID),
+			Link:        fmt.Sprintf("https://music.163.com/#/playlist?id=%d", item.ID),
 		})
 	}
 	return playlists, nil
@@ -198,26 +197,22 @@ func (n *Netease) GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 	return songs, err
 }
 
-// ParsePlaylist [新增] 解析歌单链接
+// ParsePlaylist 解析歌单链接
 func (n *Netease) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
-	// 提取 ID
-	// 链接格式通常为 https://music.163.com/#/playlist?id=24381616 或 https://music.163.com/playlist?id=24381616
 	re := regexp.MustCompile(`playlist\?id=(\d+)`)
 	matches := re.FindStringSubmatch(link)
 	if len(matches) < 2 {
 		return nil, nil, errors.New("invalid netease playlist link")
 	}
 	playlistID := matches[1]
-
-	// 复用 fetchPlaylistDetail 获取完整信息
 	return n.fetchPlaylistDetail(playlistID)
 }
 
-// fetchPlaylistDetail [内部复用] 获取歌单详情（包含 Metadata 和 Tracks）
+// fetchPlaylistDetail 获取歌单详情 (核心逻辑：使用 trackIds 全量获取)
 func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []model.Song, error) {
 	reqData := map[string]interface{}{
 		"id":         playlistID,
-		"n":          1000, // 限制获取歌曲数量，最大通常为 1000
+		"n":          0, // 0表示不直接返回详情，我们只需要ID列表
 		"csrf_token": "",
 	}
 	reqJSON, _ := json.Marshal(reqData)
@@ -249,13 +244,10 @@ func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []mod
 			Creator     struct {
 				Nickname string `json:"nickname"`
 			} `json:"creator"`
-			Tracks []struct {
-				ID   int    `json:"id"`
-				Name string `json:"name"`
-				Ar   []struct { Name string `json:"name"` } `json:"ar"`
-				Al   struct { Name string `json:"name"`; PicURL string `json:"picUrl"` } `json:"al"`
-				Dt   int `json:"dt"`
-			} `json:"tracks"`
+			// 使用 TrackIds 获取完整列表，解决数量不一致问题
+			TrackIds []struct {
+				ID int `json:"id"`
+			} `json:"trackIds"`
 		} `json:"playlist"`
 	}
 
@@ -279,64 +271,52 @@ func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []mod
 		Link:        fmt.Sprintf("https://music.163.com/#/playlist?id=%d", resp.Playlist.ID),
 	}
 
-	// 构造 Tracks
-	var songs []model.Song
-	for _, item := range resp.Playlist.Tracks {
-		var artistNames []string
-		for _, ar := range item.Ar {
-			artistNames = append(artistNames, ar.Name)
+	// 提取所有 ID
+	var allIDs []string
+	for _, tid := range resp.Playlist.TrackIds {
+		allIDs = append(allIDs, strconv.Itoa(tid.ID))
+	}
+
+	// 分批获取歌曲详情 (Detail API 支持批量，每次 500-1000 首没问题，这里保守用 500)
+	var allSongs []model.Song
+	batchSize := 500
+	for i := 0; i < len(allIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(allIDs) {
+			end = len(allIDs)
 		}
-
-		songs = append(songs, model.Song{
-			Source:   "netease",
-			ID:       strconv.Itoa(item.ID),
-			Name:     item.Name,
-			Artist:   strings.Join(artistNames, "、"),
-			Album:    item.Al.Name,
-			Duration: item.Dt / 1000,
-			Cover:    item.Al.PicURL,
-			Link:     fmt.Sprintf("https://music.163.com/#/song?id=%d", item.ID),
-			Extra: map[string]string{
-				"song_id": strconv.Itoa(item.ID),
-			},
-		})
+		
+		batchIDs := allIDs[i:end]
+		batchSongs, err := n.fetchSongsBatch(batchIDs)
+		if err == nil {
+			allSongs = append(allSongs, batchSongs...)
+		}
 	}
-	return playlist, songs, nil
+
+	return playlist, allSongs, nil
 }
 
-// Parse 解析链接并获取完整信息
-func (n *Netease) Parse(link string) (*model.Song, error) {
-	// 1. 提取 ID
-	re := regexp.MustCompile(`id=(\d+)`)
-	matches := re.FindStringSubmatch(link)
-	if len(matches) < 2 {
-		return nil, errors.New("invalid netease link")
-	}
-	songID := matches[1]
-
-	// 2. 获取 Metadata
-	song, err := n.fetchSongDetail(songID)
-	if err != nil {
-		return nil, err
+// fetchSongsBatch 批量获取歌曲详情 (利用 Detail 接口的批量特性，速度极快)
+func (n *Netease) fetchSongsBatch(songIDs []string) ([]model.Song, error) {
+	if len(songIDs) == 0 {
+		return nil, nil
 	}
 
-	// 3. 获取下载链接
-	downloadURL, err := n.GetDownloadURL(song)
-	if err == nil {
-		song.URL = downloadURL
+	// 构造 c 参数: [{"id":123},{"id":456},...]
+	var cList []map[string]interface{}
+	for _, id := range songIDs {
+		cList = append(cList, map[string]interface{}{"id": id})
 	}
+	cJSON, _ := json.Marshal(cList)
+	idsJSON, _ := json.Marshal(songIDs)
 
-	return song, nil
-}
-
-// fetchSongDetail 内部方法：调用 detail 接口获取详情
-func (n *Netease) fetchSongDetail(songID string) (*model.Song, error) {
 	reqData := map[string]interface{}{
-		"c":   fmt.Sprintf(`[{"id":%s}]`, songID),
-		"ids": fmt.Sprintf(`[%s]`, songID),
+		"c":   string(cJSON),
+		"ids": string(idsJSON),
 	}
 	reqJSON, _ := json.Marshal(reqData)
 	params, encSecKey := EncryptWeApi(string(reqJSON))
+	
 	form := url.Values{}
 	form.Set("params", params)
 	form.Set("encSecKey", encSecKey)
@@ -360,44 +340,57 @@ func (n *Netease) fetchSongDetail(songID string) (*model.Song, error) {
 			Al   struct { Name string `json:"name"`; PicURL string `json:"picUrl"` } `json:"al"`
 			Dt   int `json:"dt"`
 		} `json:"songs"`
-		Privileges []struct {
-			ID int `json:"id"`
-			Fl int `json:"fl"`
-			Pl int `json:"pl"`
-		} `json:"privileges"`
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("netease detail json error: %w", err)
+		return nil, err
 	}
 
-	if len(resp.Songs) == 0 {
-		return nil, errors.New("song not found")
+	var songs []model.Song
+	for _, item := range resp.Songs {
+		var artistNames []string
+		for _, ar := range item.Ar {
+			artistNames = append(artistNames, ar.Name)
+		}
+
+		songs = append(songs, model.Song{
+			Source:   "netease",
+			ID:       strconv.Itoa(item.ID),
+			Name:     item.Name,
+			Artist:   strings.Join(artistNames, "、"),
+			Album:    item.Al.Name,
+			Duration: item.Dt / 1000,
+			Cover:    item.Al.PicURL,
+			Link:     fmt.Sprintf("https://music.163.com/#/song?id=%d", item.ID),
+			Extra: map[string]string{
+				"song_id": strconv.Itoa(item.ID),
+			},
+		})
+	}
+	return songs, nil
+}
+
+// Parse 解析单曲链接
+func (n *Netease) Parse(link string) (*model.Song, error) {
+	re := regexp.MustCompile(`id=(\d+)`)
+	matches := re.FindStringSubmatch(link)
+	if len(matches) < 2 {
+		return nil, errors.New("invalid netease link")
+	}
+	songID := matches[1]
+
+	songs, err := n.fetchSongsBatch([]string{songID})
+	if err != nil || len(songs) == 0 {
+		return nil, fmt.Errorf("fetch song detail failed: %v", err)
+	}
+	song := &songs[0]
+
+	downloadURL, err := n.GetDownloadURL(song)
+	if err == nil {
+		song.URL = downloadURL
 	}
 
-	item := resp.Songs[0]
-	var artistNames []string
-	for _, ar := range item.Ar {
-		artistNames = append(artistNames, ar.Name)
-	}
-
-	// 简单估算比特率/大小，因为 Detail 接口不像 Search 接口那样直接返回 Size 结构
-	// 这里做保守处理
-	duration := item.Dt / 1000
-
-	return &model.Song{
-		Source:   "netease",
-		ID:       strconv.Itoa(item.ID),
-		Name:     item.Name,
-		Artist:   strings.Join(artistNames, "、"),
-		Album:    item.Al.Name,
-		Duration: duration,
-		Cover:    item.Al.PicURL,
-		Link:     fmt.Sprintf("https://music.163.com/#/song?id=%d", item.ID),
-		Extra: map[string]string{
-			"song_id": strconv.Itoa(item.ID),
-		},
-	}, nil
+	return song, nil
 }
 
 // GetDownloadURL 获取下载链接
