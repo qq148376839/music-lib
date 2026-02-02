@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guohuiyuan/music-lib/bilibili"
 	"github.com/guohuiyuan/music-lib/fivesing"
 	"github.com/guohuiyuan/music-lib/kugou"
 	"github.com/guohuiyuan/music-lib/kuwo"
@@ -65,6 +66,13 @@ func TestPlaylistPlatforms(t *testing.T) {
 			SearchPlaylist:   fivesing.SearchPlaylist,
 			GetPlaylistSongs: fivesing.GetPlaylistSongs,
 			ParsePlaylist:    fivesing.ParsePlaylist,
+		},
+		{
+			Name:             "bilibili",
+			Keyword:          "合集",
+			SearchPlaylist:   bilibili.SearchPlaylist,
+			GetPlaylistSongs: bilibili.GetPlaylistSongs,
+			ParsePlaylist:    bilibili.ParsePlaylist,
 		},
 	}
 

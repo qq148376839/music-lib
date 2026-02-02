@@ -13,19 +13,19 @@ music-lib 是一个 Go 音乐库，提供统一的搜索、解析与下载接口
 
 ## 支持平台
 
-| 平台 | 模块名 | 搜索 | 下载 | 歌词 | 链接解析 | 歌单搜索 | 歌单歌曲 | 备注 |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
-| 网易云音乐 | `netease` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| QQ 音乐 | `qq` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| 酷狗音乐 | `kugou` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| 酷我音乐 | `kuwo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| 咪咕音乐 | `migu` | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | |
-| 千千音乐 | `qianqian` | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | |
-| 汽水音乐 | `soda` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 支持音频解密 |
-| 5sing | `fivesing` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Jamendo | `jamendo` | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | |
-| JOOX | `joox` | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | |
-| Bilibili | `bilibili` | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | |
+| 平台 | 模块名 | 搜索 | 下载 | 歌词 | 歌曲链接解析 | 歌单搜索 | 歌单歌曲 | 歌单链接解析 | 备注 |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| 网易云音乐 | `netease` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| QQ 音乐 | `qq` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| 酷狗音乐 | `kugou` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| 酷我音乐 | `kuwo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| 咪咕音乐 | `migu` | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | |
+| 千千音乐 | `qianqian` | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ | ❌ | |
+| 汽水音乐 | `soda` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 支持音频解密 |
+| 5sing | `fivesing` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
+| Jamendo | `jamendo` | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | |
+| JOOX | `joox` | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | |
+| Bilibili | `bilibili` | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | |
 
 ## 安装
 
@@ -64,7 +64,7 @@ func main() {
 }
 ```
 
-### 链接解析
+### 歌曲链接解析
 
 ```go
 package main
@@ -83,6 +83,28 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("%s - %s\n", song.Artist, song.Name)
+}
+```
+
+### 歌单链接解析
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/guohuiyuan/music-lib/netease"
+)
+
+func main() {
+	link := "https://music.163.com/#/playlist?id=123456"
+	playlist, songs, err := netease.ParsePlaylist(link)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s (%d)\n", playlist.Name, len(songs))
 }
 ```
 
