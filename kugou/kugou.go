@@ -44,7 +44,9 @@ func GetLyrics(s *model.Song) (string, error)      { return defaultKugou.GetLyri
 func Parse(link string) (*model.Song, error)       { return defaultKugou.Parse(link) }
 
 // GetRecommendedPlaylists 获取推荐歌单
-func GetRecommendedPlaylists() ([]model.Playlist, error) { return defaultKugou.GetRecommendedPlaylists() }
+func GetRecommendedPlaylists() ([]model.Playlist, error) {
+	return defaultKugou.GetRecommendedPlaylists()
+}
 
 // Search 搜索歌曲
 func (k *Kugou) Search(keyword string) ([]model.Song, error) {
@@ -261,7 +263,7 @@ func (k *Kugou) GetRecommendedPlaylists() ([]model.Playlist, error) {
 	var playlists []model.Playlist
 	for _, item := range resp.Plist.List.Info {
 		cover := strings.Replace(item.ImgURL, "{size}", "240", 1)
-		
+
 		playlists = append(playlists, model.Playlist{
 			Source:      "kugou",
 			ID:          strconv.Itoa(item.SpecialID),
@@ -302,6 +304,7 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 				Duration   int    `json:"duration"`
 				FileSize   int64  `json:"filesize"`
 				AlbumName  string `json:"album_name"`
+				Remark     string `json:"remark"`
 				SingerName string `json:"singername"`
 				SongName   string `json:"songname"`
 				// [新增] 解析 trans_param 中的封面
@@ -342,12 +345,17 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 			cover = strings.Replace(item.TransParam.UnionCover, "{size}", "240", 1)
 		}
 
+		albumName := item.AlbumName
+		if albumName == "" {
+			albumName = item.Remark
+		}
+
 		songs = append(songs, model.Song{
 			Source:   "kugou",
 			ID:       item.Hash,
 			Name:     name,
 			Artist:   artist,
-			Album:    item.AlbumName,
+			Album:    albumName,
 			Duration: item.Duration,
 			Size:     item.FileSize,
 			Cover:    cover, // 赋值封面
@@ -357,9 +365,9 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 			},
 		})
 	}
-	
+
 	playlist.TrackCount = len(songs)
-	
+
 	return playlist, songs, nil
 }
 
