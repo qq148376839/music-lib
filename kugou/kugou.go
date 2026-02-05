@@ -304,6 +304,10 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 				AlbumName  string `json:"album_name"`
 				SingerName string `json:"singername"`
 				SongName   string `json:"songname"`
+				// [新增] 解析 trans_param 中的封面
+				TransParam struct {
+					UnionCover string `json:"union_cover"`
+				} `json:"trans_param"`
 			} `json:"info"`
 		} `json:"data"`
 	}
@@ -332,6 +336,12 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 			}
 		}
 
+		// [新增] 处理封面
+		cover := ""
+		if item.TransParam.UnionCover != "" {
+			cover = strings.Replace(item.TransParam.UnionCover, "{size}", "240", 1)
+		}
+
 		songs = append(songs, model.Song{
 			Source:   "kugou",
 			ID:       item.Hash,
@@ -340,6 +350,7 @@ func (k *Kugou) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, e
 			Album:    item.AlbumName,
 			Duration: item.Duration,
 			Size:     item.FileSize,
+			Cover:    cover, // 赋值封面
 			Link:     fmt.Sprintf("https://www.kugou.com/song/#hash=%s", item.Hash),
 			Extra: map[string]string{
 				"hash": item.Hash,
