@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	Referer     = "http://music.163.com/"
-	SearchAPI   = "http://music.163.com/api/linux/forward"
-	DownloadAPI = "http://music.163.com/weapi/song/enhance/player/url"
-	DetailAPI   = "https://music.163.com/weapi/v3/song/detail"
-	PlaylistAPI = "https://music.163.com/weapi/v3/playlist/detail"
+	Referer                = "http://music.163.com/"
+	SearchAPI              = "http://music.163.com/api/linux/forward"
+	DownloadAPI            = "http://music.163.com/weapi/song/enhance/player/url"
+	DetailAPI              = "https://music.163.com/weapi/v3/song/detail"
+	PlaylistAPI            = "https://music.163.com/weapi/v3/playlist/detail"
+	RecommendedPlaylistAPI = "https://music.163.com/weapi/personalized/playlist" // 新增：推荐歌单API
 )
 
 type Netease struct {
@@ -29,8 +30,10 @@ func New(cookie string) *Netease { return &Netease{cookie: cookie} }
 
 var defaultNetease = New("")
 
-func Search(keyword string) ([]model.Song, error)             { return defaultNetease.Search(keyword) }
-func SearchPlaylist(keyword string) ([]model.Playlist, error) { return defaultNetease.SearchPlaylist(keyword) }
+func Search(keyword string) ([]model.Song, error) { return defaultNetease.Search(keyword) }
+func SearchPlaylist(keyword string) ([]model.Playlist, error) {
+	return defaultNetease.SearchPlaylist(keyword)
+}
 func GetPlaylistSongs(playlistID string) ([]model.Song, error) {
 	return defaultNetease.GetPlaylistSongs(playlistID)
 }
@@ -40,6 +43,11 @@ func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
 func GetDownloadURL(s *model.Song) (string, error) { return defaultNetease.GetDownloadURL(s) }
 func GetLyrics(s *model.Song) (string, error)      { return defaultNetease.GetLyrics(s) }
 func Parse(link string) (*model.Song, error)       { return defaultNetease.Parse(link) }
+
+// GetRecommendedPlaylists 新增：获取推荐歌单（无需登录）
+func GetRecommendedPlaylists() ([]model.Playlist, error) {
+	return defaultNetease.GetRecommendedPlaylists()
+}
 
 // Search 搜索歌曲
 func (n *Netease) Search(keyword string) ([]model.Song, error) {
@@ -67,15 +75,29 @@ func (n *Netease) Search(keyword string) ([]model.Song, error) {
 	var resp struct {
 		Result struct {
 			Songs []struct {
-				ID        int `json:"id"`
-				Name      string `json:"name"`
-				Ar        []struct { Name string `json:"name"` } `json:"ar"`
-				Al        struct { Name string `json:"name"`; PicURL string `json:"picUrl"` } `json:"al"`
+				ID   int    `json:"id"`
+				Name string `json:"name"`
+				Ar   []struct {
+					Name string `json:"name"`
+				} `json:"ar"`
+				Al struct {
+					Name   string `json:"name"`
+					PicURL string `json:"picUrl"`
+				} `json:"al"`
 				Dt        int `json:"dt"`
-				Privilege struct { Fl int `json:"fl"`; Pl int `json:"pl"` } `json:"privilege"`
-				H         struct { Size int64 `json:"size"` } `json:"h"`
-				M         struct { Size int64 `json:"size"` } `json:"m"`
-				L         struct { Size int64 `json:"size"` } `json:"l"`
+				Privilege struct {
+					Fl int `json:"fl"`
+					Pl int `json:"pl"`
+				} `json:"privilege"`
+				H struct {
+					Size int64 `json:"size"`
+				} `json:"h"`
+				M struct {
+					Size int64 `json:"size"`
+				} `json:"m"`
+				L struct {
+					Size int64 `json:"size"`
+				} `json:"l"`
 			} `json:"songs"`
 		} `json:"result"`
 	}
@@ -233,7 +255,7 @@ func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []mod
 	}
 
 	var resp struct {
-		Code int `json:"code"`
+		Code     int `json:"code"`
 		Playlist struct {
 			ID          int    `json:"id"`
 			Name        string `json:"name"`
@@ -285,7 +307,7 @@ func (n *Netease) fetchPlaylistDetail(playlistID string) (*model.Playlist, []mod
 		if end > len(allIDs) {
 			end = len(allIDs)
 		}
-		
+
 		batchIDs := allIDs[i:end]
 		batchSongs, err := n.fetchSongsBatch(batchIDs)
 		if err == nil {
@@ -316,7 +338,7 @@ func (n *Netease) fetchSongsBatch(songIDs []string) ([]model.Song, error) {
 	}
 	reqJSON, _ := json.Marshal(reqData)
 	params, encSecKey := EncryptWeApi(string(reqJSON))
-	
+
 	form := url.Values{}
 	form.Set("params", params)
 	form.Set("encSecKey", encSecKey)
@@ -336,9 +358,14 @@ func (n *Netease) fetchSongsBatch(songIDs []string) ([]model.Song, error) {
 		Songs []struct {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
-			Ar   []struct { Name string `json:"name"` } `json:"ar"`
-			Al   struct { Name string `json:"name"`; PicURL string `json:"picUrl"` } `json:"al"`
-			Dt   int `json:"dt"`
+			Ar   []struct {
+				Name string `json:"name"`
+			} `json:"ar"`
+			Al struct {
+				Name   string `json:"name"`
+				PicURL string `json:"picUrl"`
+			} `json:"al"`
+			Dt int `json:"dt"`
 		} `json:"songs"`
 	}
 
@@ -489,4 +516,73 @@ func (n *Netease) GetLyrics(s *model.Song) (string, error) {
 		return "", fmt.Errorf("netease api error code: %d", resp.Code)
 	}
 	return resp.Lrc.Lyric, nil
+}
+
+// GetRecommendedPlaylists 获取推荐歌单 (无需登录，即首页推荐歌单)
+func (n *Netease) GetRecommendedPlaylists() ([]model.Playlist, error) {
+	reqData := map[string]interface{}{
+		"limit": 30, // 默认返回30个
+		"total": true,
+		"n":     1000,
+	}
+	reqJSON, _ := json.Marshal(reqData)
+	params, encSecKey := EncryptWeApi(string(reqJSON))
+	form := url.Values{}
+	form.Set("params", params)
+	form.Set("encSecKey", encSecKey)
+
+	headers := []utils.RequestOption{
+		utils.WithHeader("Referer", Referer),
+		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
+		// 此接口不需要 Cookie
+	}
+
+	body, err := utils.Post(RecommendedPlaylistAPI, strings.NewReader(form.Encode()), headers...)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Code   int `json:"code"`
+		Result []struct {
+			ID         int     `json:"id"`
+			Name       string  `json:"name"`
+			PicURL     string  `json:"picUrl"`
+			PlayCount  float64 `json:"playCount"`
+			TrackCount int     `json:"trackCount"`
+			Copywriter string  `json:"copywriter"` // 推荐语
+			Alg        string  `json:"alg"`
+		} `json:"result"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("netease recommended playlist json parse error: %w", err)
+	}
+	if resp.Code != 200 {
+		return nil, fmt.Errorf("netease api error code: %d", resp.Code)
+	}
+
+	var playlists []model.Playlist
+	for _, item := range resp.Result {
+		pl := model.Playlist{
+			Source:      "netease",
+			ID:          strconv.Itoa(item.ID),
+			Name:        item.Name,
+			Cover:       item.PicURL,
+			PlayCount:   int(item.PlayCount),
+			TrackCount:  item.TrackCount, // 注意：此接口返回的 trackCount 可能为 0
+			Description: item.Copywriter, // 将推荐语作为描述
+			Link:        fmt.Sprintf("https://music.163.com/#/playlist?id=%d", item.ID),
+			Extra:       map[string]string{},
+		}
+
+		// 如果有算法标签，可以保存
+		if item.Alg != "" {
+			pl.Extra["alg"] = item.Alg
+		}
+
+		playlists = append(playlists, pl)
+	}
+
+	return playlists, nil
 }

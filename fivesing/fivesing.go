@@ -133,7 +133,7 @@ func (f *Fivesing) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 
 	playlists := make([]model.Playlist, len(resp.List))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10) // Limit concurrency
+	sem := make(chan struct{}, 10)
 
 	for i, item := range resp.List {
 		title := removeEmTags(html.UnescapeString(item.Title))
@@ -163,7 +163,7 @@ func (f *Fivesing) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 			},
 		}
 
-		// Parallel fetch for creator name if missing
+		// 并行获取缺失的创建者名称
 		if item.UserName == "" && item.SongListId != "" {
 			wg.Add(1)
 			go func(idx int, plID string) {
@@ -171,7 +171,6 @@ func (f *Fivesing) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				// Call fetchPlaylistInfo (lightweight version of fetchPlaylistDetail)
 				if name, err := f.fetchCreatorName(plID); err == nil && name != "" {
 					playlists[idx].Creator = name
 				}
@@ -183,7 +182,7 @@ func (f *Fivesing) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	return playlists, nil
 }
 
-// fetchCreatorName Helper to get creator name from getsonglist API
+// fetchCreatorName 辅助函数：仅获取创建者名称
 func (f *Fivesing) fetchCreatorName(id string) (string, error) {
 	infoURL := fmt.Sprintf("http://mobileapi.5sing.kugou.com/song/getsonglist?id=%s&songfields=user", id)
 	infoBody, err := utils.Get(infoURL, utils.WithHeader("User-Agent", UserAgent))
@@ -203,35 +202,28 @@ func (f *Fivesing) fetchCreatorName(id string) (string, error) {
 	return infoResp.Data.User.UserName, nil
 }
 
-// GetPlaylistSongs 获取歌单详情 (仅返回歌曲)
+// GetPlaylistSongs 获取歌单详情 (简化版：直接复用 fetchPlaylistDetail)
 func (f *Fivesing) GetPlaylistSongs(id string) ([]model.Song, error) {
-	_, songs, err := f.fetchPlaylistDetail(id, "")
+	// 复用核心逻辑，只返回歌曲切片
+	_, songs, err := f.fetchPlaylistDetail(id)
 	return songs, err
 }
 
 // ParsePlaylist 解析歌单链接并返回详情
 func (f *Fivesing) ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
-	// [修正] 支持纯数字ID (\d+) 和 字母数字混合ID ([a-zA-Z0-9]+)
-	// 链接格式: http://5sing.kugou.com/{userId}/dj/{songListId}.html
 	re := regexp.MustCompile(`5sing\.kugou\.com/(?:(\d+)/)?dj/([a-zA-Z0-9]+)\.html`)
 	matches := re.FindStringSubmatch(link)
 	if len(matches) < 3 {
 		return nil, nil, errors.New("invalid 5sing playlist link")
 	}
-	userId := matches[1] // 可能为空
 	playlistId := matches[2]
-
-	return f.fetchPlaylistDetail(playlistId, userId)
+	// userId (matches[1]) 可选，因为 API 验证更准确，这里只用 ID
+	return f.fetchPlaylistDetail(playlistId)
 }
 
-// fetchPlaylistDetail [内部通用] 获取歌单详情 (Metadata + Songs)
-// userId 是可选的，如果为空则尝试自动获取
-func (f *Fivesing) fetchPlaylistDetail(id, knownUserId string) (*model.Playlist, []model.Song, error) {
-	// 1. 自动获取 UserId (如果未提供)
-	var userId = knownUserId
-
-	// 我们需要调用 getsonglist 接口，无论是否有 userId，
-	// 因为这个接口返回了歌单的标题、封面等元数据
+// fetchPlaylistDetail [核心] 获取歌单详情 (API 获取元数据 + HTML 解析歌曲)
+func (f *Fivesing) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, error) {
+	// 1. 调用 API 获取歌单元数据 (标题、封面、关键的 UserId)
 	infoURL := fmt.Sprintf("http://mobileapi.5sing.kugou.com/song/getsonglist?id=%s&songfields=ID,user", id)
 	infoBody, err := utils.Get(infoURL, utils.WithHeader("User-Agent", UserAgent))
 	if err != nil {
@@ -256,14 +248,16 @@ func (f *Fivesing) fetchPlaylistDetail(id, knownUserId string) (*model.Playlist,
 		return nil, nil, fmt.Errorf("fetch playlist info error: %w", err)
 	}
 
-	// 更新元数据
+	// 验证 UserId
+	userId := ""
 	if infoResp.Data.User.ID != 0 {
 		userId = strconv.FormatInt(infoResp.Data.User.ID, 10)
 	}
 	if userId == "" {
-		return nil, nil, errors.New("playlist user not found")
+		return nil, nil, errors.New("playlist user not found or invalid id")
 	}
 
+	// 构造 Playlist 对象
 	playlist := &model.Playlist{
 		Source:      "fivesing",
 		ID:          id,
@@ -277,27 +271,41 @@ func (f *Fivesing) fetchPlaylistDetail(id, knownUserId string) (*model.Playlist,
 		Extra:       map[string]string{"user_id": userId},
 	}
 
-	// 2. 解析 HTML 获取歌曲列表
+	// 2. 构造歌单页面 URL 并获取 HTML
 	pageURL := playlist.Link
 	htmlBodyBytes, err := utils.Get(pageURL,
 		utils.WithHeader("User-Agent", UserAgent),
 		utils.WithHeader("Cookie", f.cookie),
 	)
 	if err != nil {
-		return playlist, nil, err // 即使解析失败也返回元数据
+		// 如果获取 HTML 失败，至少返回元数据
+		return playlist, nil, fmt.Errorf("fetch html failed: %w", err)
 	}
-	htmlContent := string(htmlBodyBytes)
 
-	// 3. 解析歌曲列表 (复用原逻辑)
+	// 3. 解析 HTML 提取歌曲
+	songs, err := f.parseSongsFromHTML(string(htmlBodyBytes))
+	if err != nil {
+		// 解析失败不影响元数据返回，但记录错误
+		return playlist, nil, err
+	}
+
+	return playlist, songs, nil
+}
+
+// parseSongsFromHTML [私有] 从歌单 HTML 中提取歌曲信息
+func (f *Fivesing) parseSongsFromHTML(htmlContent string) ([]model.Song, error) {
+	// A. 提取所有 <li class="p_rel">...</li> 块
 	blockRe := regexp.MustCompile(`<li class="p_rel">([\s\S]*?)</li>`)
 	blocks := blockRe.FindAllStringSubmatch(htmlContent, -1)
 
 	if len(blocks) == 0 {
-		// 可能是空歌单或者结构变化
-		return playlist, nil, nil
+		return nil, errors.New("no songs found in playlist html (structure mismatch)")
 	}
 
+	// B. 预编译块内提取正则
+	// 提取歌曲: 匹配 href="/yc/123.html" 和 歌名
 	songRe := regexp.MustCompile(`href="http://5sing\.kugou\.com/(yc|fc|bz)/(\d+)\.html"[^>]*>([^<]+)</a>`)
+	// 提取歌手: 匹配 class="s_soner" (注意: 5sing 拼写错误 soner)
 	artistRe := regexp.MustCompile(`class="s_soner[^"]*".*?>([^<]+)</a>`)
 
 	var songs []model.Song
@@ -306,26 +314,30 @@ func (f *Fivesing) fetchPlaylistDetail(id, knownUserId string) (*model.Playlist,
 	for _, match := range blocks {
 		blockHTML := match[1]
 
+		// 提取歌曲信息
 		songMatch := songRe.FindStringSubmatch(blockHTML)
 		if len(songMatch) < 4 {
 			continue
 		}
-		kind := songMatch[1]
+		kind := songMatch[1] // yc, fc, bz
 		songID := songMatch[2]
 		rawName := songMatch[3]
 
+		// 提取歌手信息
 		artist := "Unknown"
 		artistMatch := artistRe.FindStringSubmatch(blockHTML)
 		if len(artistMatch) >= 2 {
 			artist = artistMatch[1]
 		}
 
+		// 去重
 		uniqueKey := kind + "|" + songID
 		if seen[uniqueKey] {
 			continue
 		}
 		seen[uniqueKey] = true
 
+		// 清理转义字符
 		name := strings.TrimSpace(html.UnescapeString(rawName))
 		artist = strings.TrimSpace(html.UnescapeString(artist))
 
@@ -341,8 +353,7 @@ func (f *Fivesing) fetchPlaylistDetail(id, knownUserId string) (*model.Playlist,
 			},
 		})
 	}
-
-	return playlist, songs, nil
+	return songs, nil
 }
 
 // Parse 解析链接并获取完整信息
