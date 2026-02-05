@@ -189,17 +189,31 @@ func (f *Fivesing) fetchCreatorName(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var infoResp struct {
-		Data struct {
-			User struct {
-				UserName string `json:"NN"`
-			} `json:"user"`
-		} `json:"data"`
+
+	// 使用 RawMessage 避免 data 为 [] 时报错
+	var rawResp struct {
+		Data json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(infoBody, &infoResp); err != nil {
+	if err := json.Unmarshal(infoBody, &rawResp); err != nil {
 		return "", err
 	}
-	return infoResp.Data.User.UserName, nil
+
+	// 检查 Data 是否是对象 (以 '{' 开头)
+	dataStr := strings.TrimSpace(string(rawResp.Data))
+	if len(dataStr) == 0 || dataStr[0] != '{' {
+		return "", nil // 数据为空或格式不对，直接返回空名
+	}
+
+	var data struct {
+		User struct {
+			UserName string `json:"NN"`
+		} `json:"user"`
+	}
+
+	if err := json.Unmarshal(rawResp.Data, &data); err != nil {
+		return "", err
+	}
+	return data.User.UserName, nil
 }
 
 // GetPlaylistSongs 获取歌单详情 (简化版：直接复用 fetchPlaylistDetail)
@@ -230,28 +244,41 @@ func (f *Fivesing) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song
 		return nil, nil, fmt.Errorf("fetch info failed: %w", err)
 	}
 
-	var infoResp struct {
-		Data struct {
-			Title     string `json:"T"`
-			Content   string `json:"C"`
-			Picture   string `json:"P"`
-			Click     int    `json:"H"`
-			SongCount int    `json:"E"`
-			User      struct {
-				ID       int64  `json:"ID"`
-				UserName string `json:"NN"`
-			} `json:"user"`
-		} `json:"data"`
+	// 使用 RawMessage 处理多态类型 (data 可能是 object 或 array)
+	var rawResp struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(infoBody, &rawResp); err != nil {
+		return nil, nil, fmt.Errorf("fetch playlist info json error: %w", err)
 	}
 
-	if err := json.Unmarshal(infoBody, &infoResp); err != nil {
-		return nil, nil, fmt.Errorf("fetch playlist info error: %w", err)
+	// 检查 Data 是否是有效对象 (以 '{' 开头)。如果是 '[]' (空数组)，说明歌单不存在或无权限
+	dataStr := strings.TrimSpace(string(rawResp.Data))
+	if len(dataStr) == 0 || dataStr[0] != '{' {
+		return nil, nil, errors.New("playlist info not found or invalid (api returned empty list)")
+	}
+
+	// 定义真实的数据结构
+	var data struct {
+		Title     string `json:"T"`
+		Content   string `json:"C"`
+		Picture   string `json:"P"`
+		Click     int    `json:"H"`
+		SongCount int    `json:"E"`
+		User      struct {
+			ID       int64  `json:"ID"`
+			UserName string `json:"NN"`
+		} `json:"user"`
+	}
+
+	if err := json.Unmarshal(rawResp.Data, &data); err != nil {
+		return nil, nil, fmt.Errorf("parse playlist data error: %w", err)
 	}
 
 	// 验证 UserId
 	userId := ""
-	if infoResp.Data.User.ID != 0 {
-		userId = strconv.FormatInt(infoResp.Data.User.ID, 10)
+	if data.User.ID != 0 {
+		userId = strconv.FormatInt(data.User.ID, 10)
 	}
 	if userId == "" {
 		return nil, nil, errors.New("playlist user not found or invalid id")
@@ -261,12 +288,12 @@ func (f *Fivesing) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song
 	playlist := &model.Playlist{
 		Source:      "fivesing",
 		ID:          id,
-		Name:        infoResp.Data.Title,
-		Cover:       infoResp.Data.Picture,
-		TrackCount:  infoResp.Data.SongCount,
-		PlayCount:   infoResp.Data.Click,
-		Creator:     infoResp.Data.User.UserName,
-		Description: infoResp.Data.Content,
+		Name:        data.Title,
+		Cover:       data.Picture,
+		TrackCount:  data.SongCount,
+		PlayCount:   data.Click,
+		Creator:     data.User.UserName,
+		Description: data.Content,
 		Link:        fmt.Sprintf("http://5sing.kugou.com/%s/dj/%s.html", userId, id),
 		Extra:       map[string]string{"user_id": userId},
 	}
@@ -285,8 +312,8 @@ func (f *Fivesing) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song
 	// 3. 解析 HTML 提取歌曲
 	songs, err := f.parseSongsFromHTML(string(htmlBodyBytes))
 	if err != nil {
-		// 解析失败不影响元数据返回，但记录错误
-		return playlist, nil, err
+		// 解析失败不影响元数据返回，但记录错误 (有些歌单可能确实为空)
+		return playlist, nil, nil
 	}
 
 	return playlist, songs, nil
@@ -345,7 +372,7 @@ func (f *Fivesing) parseSongsFromHTML(htmlContent string) ([]model.Song, error) 
 			Source: "fivesing",
 			ID:     fmt.Sprintf("%s|%s", songID, kind),
 			Name:   name,
-			Artist: artist,
+			Artist:   artist,
 			Link:   fmt.Sprintf("http://5sing.kugou.com/%s/%s.html", kind, songID),
 			Extra: map[string]string{
 				"songid":   songID,
