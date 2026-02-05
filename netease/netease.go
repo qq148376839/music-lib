@@ -550,11 +550,10 @@ func (n *Netease) GetRecommendedPlaylists() ([]model.Playlist, error) {
 			PicURL     string  `json:"picUrl"`
 			PlayCount  float64 `json:"playCount"`
 			TrackCount int     `json:"trackCount"`
-			Copywriter string  `json:"copywriter"` // 推荐语
+			Copywriter string  `json:"copywriter"` // 关键字段：推荐语
 			Alg        string  `json:"alg"`
 		} `json:"result"`
 	}
-
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("netease recommended playlist json parse error: %w", err)
 	}
@@ -564,19 +563,25 @@ func (n *Netease) GetRecommendedPlaylists() ([]model.Playlist, error) {
 
 	var playlists []model.Playlist
 	for _, item := range resp.Result {
+		// [优化] 由于接口不返回 Creator，我们用 Copywriter (推荐语) 代替，或者显示 "网易推荐"
+		creatorDisplay := "网易云推荐"
+		if item.Copywriter != "" {
+			creatorDisplay = item.Copywriter
+		}
+
 		pl := model.Playlist{
 			Source:      "netease",
 			ID:          strconv.Itoa(item.ID),
 			Name:        item.Name,
 			Cover:       item.PicURL,
 			PlayCount:   int(item.PlayCount),
-			TrackCount:  item.TrackCount, // 注意：此接口返回的 trackCount 可能为 0
-			Description: item.Copywriter, // 将推荐语作为描述
+			TrackCount:  item.TrackCount,
+			Description: item.Copywriter, 
+			Creator:     creatorDisplay, // [修改] 使用推荐语代替作者名
 			Link:        fmt.Sprintf("https://music.163.com/#/playlist?id=%d", item.ID),
 			Extra:       map[string]string{},
 		}
 
-		// 如果有算法标签，可以保存
 		if item.Alg != "" {
 			pl.Extra["alg"] = item.Alg
 		}
