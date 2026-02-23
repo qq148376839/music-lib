@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -455,7 +456,11 @@ func (s *Soda) GetDownloadInfo(song *model.Song) (*DownloadInfo, error) {
 	if strings.Contains(song.URL, "#auth=") {
 		parts := strings.Split(song.URL, "#auth=")
 		if len(parts) == 2 {
-			auth, _ := url.QueryUnescape(parts[1])
+			auth, unescErr := url.QueryUnescape(parts[1])
+			if unescErr != nil {
+				slog.Warn("[soda] url.QueryUnescape failed, using raw value", "error", unescErr)
+				auth = parts[1]
+			}
 			return &DownloadInfo{
 				URL:      parts[0],
 				PlayAuth: auth,
@@ -557,7 +562,7 @@ func (s *Soda) fetchPlayerInfo(playerInfoURL string) (*DownloadInfo, error) {
 		downloadURL = best.BackupPlayUrl
 	}
 	if downloadURL == "" {
-		return nil, errors.New("invalid download url")
+		return nil, errors.New("[soda] no valid download url found in player info")
 	}
 
 	return &DownloadInfo{URL: downloadURL, PlayAuth: best.PlayAuth, Format: best.Format, Size: best.Size}, nil

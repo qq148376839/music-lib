@@ -273,14 +273,7 @@ func (m *Migu) GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	if contentID == "" || resourceType == "" || formatType == "" {
-		parts := strings.Split(s.ID, "|")
-		if len(parts) == 3 {
-			contentID = parts[0]
-			resourceType = parts[1]
-			formatType = parts[2]
-		} else {
-			return "", errors.New("invalid id structure and missing extra data")
-		}
+		return "", fmt.Errorf("[migu] missing extra data for song %s", s.ID)
 	}
 
 	params := url.Values{}
@@ -495,7 +488,7 @@ func (m *Migu) convertItemToSong(item MiguSongItem) *model.Song {
 
 	return &model.Song{
 		Source:   "migu",
-		ID:       fmt.Sprintf("%s|%s|%s", item.ContentID, bestFormat.ResourceType, bestFormat.FormatType),
+		ID:       item.ContentID,
 		Name:     item.Name,
 		Artist:   strings.Join(artistNames, "、"),
 		Album:    albumName,
@@ -523,14 +516,11 @@ func (m *Migu) GetLyrics(s *model.Song) (string, error) {
 	if s.Extra != nil && s.Extra["content_id"] != "" {
 		contentID = s.Extra["content_id"]
 	} else {
-		parts := strings.Split(s.ID, "|")
-		if len(parts) >= 1 {
-			contentID = parts[0]
-		}
+		contentID = s.ID
 	}
 
 	if contentID == "" {
-		return "", errors.New("invalid migu song id")
+		return "", fmt.Errorf("[migu] missing content_id for song %s", s.ID)
 	}
 
 	params := url.Values{}

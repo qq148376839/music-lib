@@ -1,0 +1,9 @@
+.git
+.gitignore
+*.md
+LICENSE
+*_test.go
+.vscode
+.idea
+*.swp
+*.swo

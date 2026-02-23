@@ -1,0 +1,24 @@
+# ---- Build Stage ----
+FROM golang:1.21-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/music-lib-server ./cmd/server
+
+# ---- Production Stage ----
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+ENV TZ=Asia/Shanghai
+
+COPY --from=builder /app/music-lib-server /usr/local/bin/music-lib-server
+
+EXPOSE 8080
+ENV PORT=8080
+
+ENTRYPOINT ["music-lib-server"]

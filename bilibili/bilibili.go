@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -186,7 +187,7 @@ func (b *Bilibili) buildSongsFromSeasonSections(sections []bilibiliSeasonSection
 			}
 			songs = append(songs, model.Song{
 				Source:   "bilibili",
-				ID:       fmt.Sprintf("%s|%d", ep.BVID, ep.CID),
+				ID:       ep.BVID,
 				Name:     name,
 				Artist:   artistName,
 				Album:    ep.BVID,
@@ -337,7 +338,7 @@ func (b *Bilibili) buildSongsFromPages(bvid, rootTitle, author, cover string, pa
 
 		songs = append(songs, model.Song{
 			Source:   "bilibili",
-			ID:       fmt.Sprintf("%s|%d", bvid, page.CID),
+			ID:       bvid,
 			Name:     displayTitle,
 			Artist:   author,
 			Album:    bvid,
@@ -401,7 +402,7 @@ func (b *Bilibili) Search(keyword string) ([]model.Song, error) {
 
 		songs = append(songs, model.Song{
 			Source:   "bilibili",
-			ID:       fmt.Sprintf("%s|%d", item.BVID, page.CID),
+			ID:       item.BVID,
 			Name:     displayTitle,
 			Artist:   item.Author,
 			Album:    item.BVID,
@@ -724,7 +725,7 @@ func (b *Bilibili) fetchSeasonSongs(mid, seasonID int64) ([]model.Song, error) {
 				}
 				allSongs = append(allSongs, model.Song{
 					Source:   "bilibili",
-					ID:       fmt.Sprintf("%s|%d", arc.BVID, arc.CID),
+					ID:       arc.BVID,
 					Name:     arc.Title,
 					Artist:   "",
 					Album:    seasonTitle,
@@ -807,11 +808,14 @@ func (b *Bilibili) Parse(link string) (*model.Song, error) {
 	cidStr := strconv.FormatInt(targetPage.CID, 10)
 
 	// 4. 立即获取下载链接
-	audioURL, _ := b.fetchAudioURL(bvid, cidStr) // 忽略错误，尽可能返回元数据
+	audioURL, audioErr := b.fetchAudioURL(bvid, cidStr)
+	if audioErr != nil {
+		slog.Warn("[bilibili] fetch audio url failed, returning metadata only", "bvid", bvid, "error", audioErr)
+	}
 
 	return &model.Song{
 		Source:   "bilibili",
-		ID:       fmt.Sprintf("%s|%d", viewResp.Data.BVID, targetPage.CID),
+		ID:       viewResp.Data.BVID,
 		Name:     displayTitle,
 		Artist:   viewResp.Data.Owner.Name,
 		Album:    viewResp.Data.BVID,
@@ -843,13 +847,7 @@ func (b *Bilibili) GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	if bvid == "" || cid == "" {
-		parts := strings.Split(s.ID, "|")
-		if len(parts) == 2 {
-			bvid = parts[0]
-			cid = parts[1]
-		} else {
-			return "", errors.New("invalid id structure")
-		}
+		return "", fmt.Errorf("[bilibili] missing extra data for song %s", s.ID)
 	}
 
 	return b.fetchAudioURL(bvid, cid)
@@ -880,7 +878,9 @@ func (b *Bilibili) fetchAudioURL(bvid, cid string) (string, error) {
 			} `json:"dash"`
 		} `json:"data"`
 	}
-	json.Unmarshal(body, &resp)
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("[bilibili] playurl json parse error for bvid=%s cid=%s: %w", bvid, cid, err)
+	}
 
 	if len(resp.Data.Dash.Flac.Audio) > 0 {
 		return resp.Data.Dash.Flac.Audio[0].BaseURL, nil
@@ -892,7 +892,7 @@ func (b *Bilibili) fetchAudioURL(bvid, cid string) (string, error) {
 		return resp.Data.Durl[0].URL, nil
 	}
 
-	return "", errors.New("no audio found")
+	return "", fmt.Errorf("[bilibili] no audio found for bvid=%s cid=%s", bvid, cid)
 }
 
 func (b *Bilibili) GetLyrics(s *model.Song) (string, error) {

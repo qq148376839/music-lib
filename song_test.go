@@ -163,11 +163,6 @@ func TestPlatforms(t *testing.T) {
 				t.Errorf("❌ [%s] Extra is nil", suite.Name)
 			}
 
-			// 特殊验证：FiveSing ID 格式
-			if suite.Name == "fivesing" && !strings.Contains(song.ID, "|") {
-				t.Errorf("❌ [%s] FiveSing ID format error: expected '|' separator, got %s", suite.Name, song.ID)
-			}
-
 			// -------------------------------------------------------
 			// 2. Test GetDownloadURL (复用 Search 结果)
 			// -------------------------------------------------------
@@ -280,11 +275,4 @@ func TestLyricsSourceMismatch(t *testing.T) {
 			}
 		})
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

@@ -261,31 +261,17 @@ func (k *Kuwo) GetRecommendedPlaylists() ([]model.Playlist, error) {
 			cover = "http://" + cover
 		}
 
-		parseAnyInt := func(val interface{}) int {
-			switch v := val.(type) {
-			case float64:
-				return int(v)
-			case string:
-				if v != "" {
-					if n, err := strconv.Atoi(v); err == nil {
-						return n
-					}
-				}
-			}
-			return 0
-		}
-
 		// 处理 ListenCnt 多态类型
-		playCount := parseAnyInt(item.ListenCnt)
-		trackCount := parseAnyInt(item.SongNum)
+		playCount := utils.ParseAnyInt(item.ListenCnt)
+		trackCount := utils.ParseAnyInt(item.SongNum)
 		if trackCount == 0 {
-			trackCount = parseAnyInt(item.Total)
+			trackCount = utils.ParseAnyInt(item.Total)
 		}
 		if trackCount == 0 {
-			trackCount = parseAnyInt(item.Count)
+			trackCount = utils.ParseAnyInt(item.Count)
 		}
 		if trackCount == 0 {
-			trackCount = parseAnyInt(item.MusicNum)
+			trackCount = utils.ParseAnyInt(item.MusicNum)
 		}
 
 		playlists = append(playlists, model.Playlist{
@@ -371,14 +357,7 @@ func (k *Kuwo) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, er
 			artist = item.ArtistName
 		}
 
-		var duration int
-		switch v := item.Duration.(type) {
-		case string:
-			d, _ := strconv.Atoi(v)
-			duration = d
-		case float64:
-			duration = int(v)
-		}
+		duration := utils.ParseAnyInt(item.Duration)
 
 		cover := item.AlbumPic
 		if cover != "" {
@@ -530,7 +509,7 @@ func (k *Kuwo) fetchAudioURL(rid string) (string, error) {
 		}
 	}
 
-	return "", errors.New("download url not found (copyright restricted)")
+	return "", fmt.Errorf("[kuwo] download url not found for song %s (copyright restricted)", rid)
 }
 
 // GetLyrics 获取歌词

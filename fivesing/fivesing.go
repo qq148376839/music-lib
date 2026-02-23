@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -84,7 +85,7 @@ func (f *Fivesing) Search(keyword string) ([]model.Song, error) {
 
 		songs = append(songs, model.Song{
 			Source:   "fivesing",
-			ID:       fmt.Sprintf("%d|%s", item.SongID, item.TypeEname),
+			ID:       strconv.FormatInt(item.SongID, 10),
 			Name:     name,
 			Artist:   artist,
 			Duration: duration,
@@ -370,7 +371,7 @@ func (f *Fivesing) parseSongsFromHTML(htmlContent string) ([]model.Song, error) 
 
 		songs = append(songs, model.Song{
 			Source: "fivesing",
-			ID:     fmt.Sprintf("%s|%s", songID, kind),
+			ID:     songID,
 			Name:   name,
 			Artist:   artist,
 			Link:   fmt.Sprintf("http://5sing.kugou.com/%s/%s.html", kind, songID),
@@ -412,13 +413,7 @@ func (f *Fivesing) GetDownloadURL(s *model.Song) (string, error) {
 	}
 
 	if songID == "" || songType == "" {
-		parts := strings.Split(s.ID, "|")
-		if len(parts) == 2 {
-			songID = parts[0]
-			songType = parts[1]
-		} else {
-			return "", errors.New("invalid id structure")
-		}
+		return "", fmt.Errorf("[fivesing] missing extra data for song %s", s.ID)
 	}
 
 	return f.fetchAudioLink(songID, songType)
@@ -436,7 +431,10 @@ func (f *Fivesing) fetchSongInfo(songID, songType string) (*model.Song, error) {
 	params.Set("songtype", songType)
 	metaURL := "http://mobileapi.5sing.kugou.com/song/newget?" + params.Encode()
 
-	metaBody, _ := utils.Get(metaURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Cookie", f.cookie))
+	metaBody, metaErr := utils.Get(metaURL, utils.WithHeader("User-Agent", UserAgent), utils.WithHeader("Cookie", f.cookie))
+	if metaErr != nil {
+		slog.Warn("[fivesing] metadata fetch failed, using fallback name", "songid", songID, "error", metaErr)
+	}
 
 	var name, artist, cover string
 
@@ -461,7 +459,7 @@ func (f *Fivesing) fetchSongInfo(songID, songType string) (*model.Song, error) {
 
 	return &model.Song{
 		Source: "fivesing",
-		ID:     fmt.Sprintf("%s|%s", songID, songType),
+		ID:     songID,
 		Name:   name,
 		Artist: artist,
 		Cover:  cover,
@@ -503,7 +501,7 @@ func (f *Fivesing) fetchAudioLink(songID, songType string) (string, error) {
 	}
 
 	if resp.Code != 1000 {
-		return "", errors.New("api returned error code")
+		return "", fmt.Errorf("[fivesing] api returned error code %d for song %s", resp.Code, songID)
 	}
 
 	if url := getFirstValid(resp.Data.SQUrl, resp.Data.SQUrlBackup); url != "" {
@@ -516,7 +514,7 @@ func (f *Fivesing) fetchAudioLink(songID, songType string) (string, error) {
 		return url, nil
 	}
 
-	return "", errors.New("no valid download url found")
+	return "", fmt.Errorf("[fivesing] no valid download url found for song %s", songID)
 }
 
 func (f *Fivesing) GetLyrics(s *model.Song) (string, error) {
@@ -528,16 +526,10 @@ func (f *Fivesing) GetLyrics(s *model.Song) (string, error) {
 	if s.Extra != nil {
 		songID = s.Extra["songid"]
 		songType = s.Extra["songtype"]
-	} else {
-		parts := strings.Split(s.ID, "|")
-		if len(parts) == 2 {
-			songID = parts[0]
-			songType = parts[1]
-		}
 	}
 
 	if songID == "" {
-		return "", errors.New("invalid id")
+		return "", fmt.Errorf("[fivesing] missing extra data for song %s", s.ID)
 	}
 
 	params := url.Values{}
@@ -555,9 +547,11 @@ func (f *Fivesing) GetLyrics(s *model.Song) (string, error) {
 			DynamicWords string `json:"dynamicWords"`
 		} `json:"data"`
 	}
-	json.Unmarshal(body, &resp)
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "", fmt.Errorf("[fivesing] lyrics json parse error for song %s: %w", s.ID, err)
+	}
 	if resp.Data.DynamicWords == "" {
-		return "", errors.New("lyrics not found")
+		return "", fmt.Errorf("[fivesing] lyrics not found for song %s", s.ID)
 	}
 	return resp.Data.DynamicWords, nil
 }

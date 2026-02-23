@@ -106,17 +106,7 @@ func (k *Kugou) Search(keyword string) ([]model.Song, error) {
 			finalHash = item.HQFileHash
 		}
 
-		var size int64
-		switch v := item.FileSize.(type) {
-		case float64:
-			size = int64(v)
-		case int:
-			size = int64(v)
-		case string:
-			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
-				size = i
-			}
-		}
+		size := utils.ParseAnyInt64(item.FileSize)
 
 		bitrate := 0
 		if item.Duration > 0 && size > 0 {
@@ -437,7 +427,7 @@ func (k *Kugou) fetchSongInfo(hash string) (*model.Song, error) {
 	}
 
 	if resp.URL == "" {
-		return nil, errors.New("download url not found (might be paid song)")
+		return nil, fmt.Errorf("[kugou] download url not found for song %s (might be paid song)", hash)
 	}
 
 	cover := strings.Replace(resp.AlbumImg, "{size}", "240", 1)

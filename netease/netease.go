@@ -463,7 +463,7 @@ func (n *Netease) GetDownloadURL(s *model.Song) (string, error) {
 		return "", fmt.Errorf("json parse error: %w", err)
 	}
 	if len(resp.Data) == 0 || resp.Data[0].URL == "" {
-		return "", errors.New("download url not found (might be vip or copyright restricted)")
+		return "", fmt.Errorf("[netease] download url not found for song %s (might be vip or copyright restricted)", songID)
 	}
 	return resp.Data[0].URL, nil
 }

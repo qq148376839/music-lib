@@ -200,13 +200,8 @@ func (q *Qianqian) SearchPlaylist(keyword string) ([]model.Playlist, error) {
 	var playlists []model.Playlist
 	for _, item := range dataObj.TypeSonglist {
 		// ID 转换
-		var id string
-		switch v := item.ID.(type) {
-		case float64:
-			id = strconv.FormatInt(int64(v), 10)
-		case string:
-			id = v
-		default:
+		id := utils.ParseAnyString(item.ID)
+		if id == "" {
 			continue
 		}
 
@@ -390,7 +385,7 @@ func (q *Qianqian) fetchDownloadURL(tsid string) (string, error) {
 			return downloadURL, nil
 		}
 	}
-	return "", errors.New("download url not found")
+	return "", fmt.Errorf("[qianqian] download url not found for song %s", tsid)
 }
 
 // fetchSongInfo 内部方法：获取元数据

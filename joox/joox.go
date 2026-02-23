@@ -443,16 +443,7 @@ func (j *Joox) fetchSongInfo(songID string) (*model.Song, error) {
 	var downloadURL string
 	for _, c := range candidates {
 		if val, ok := availableQualities[c.MapKey]; ok {
-			hasSize := false
-			switch v := val.(type) {
-			case string:
-				hasSize = v != "0" && v != ""
-			case float64:
-				hasSize = v > 0
-			case int:
-				hasSize = v > 0
-			}
-			if hasSize && c.URL != "" {
+			if utils.ParseAnyInt64(val) > 0 && c.URL != "" {
 				downloadURL = c.URL
 				break
 			}
@@ -460,7 +451,7 @@ func (j *Joox) fetchSongInfo(songID string) (*model.Song, error) {
 	}
 
 	if downloadURL == "" {
-		return nil, errors.New("no valid download url found")
+		return nil, fmt.Errorf("[joox] no valid download url found for song %s", songID)
 	}
 
 	return &model.Song{
