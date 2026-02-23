@@ -17,11 +17,11 @@ var longClient = &http.Client{Timeout: 10 * time.Minute}
 
 // WriteSongToDisk downloads an audio file and saves it along with lyrics into
 // the directory structure: {baseDir}/{Artist}/{Album}/{filename}.
-// It returns the final file path on success.
-func WriteSongToDisk(baseDir string, song *model.Song, audioURL, lyrics string, progressFn func(int64)) (string, error) {
+// It returns the final file path, whether the file was skipped (already existed), and any error.
+func WriteSongToDisk(baseDir string, song *model.Song, audioURL, lyrics string, progressFn func(int64)) (string, bool, error) {
 	dir := buildSongDir(baseDir, song)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("create dir: %w", err)
+		return "", false, fmt.Errorf("create dir: %w", err)
 	}
 
 	destPath := filepath.Join(dir, song.Filename())
@@ -35,12 +35,12 @@ func WriteSongToDisk(baseDir string, song *model.Song, audioURL, lyrics string, 
 		if lyrics != "" {
 			_ = saveLyrics(dir, song, lyrics)
 		}
-		return destPath, nil
+		return destPath, true, nil
 	}
 
 	n, err := downloadFile(destPath, audioURL, progressFn)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	_ = n
 
@@ -52,7 +52,7 @@ func WriteSongToDisk(baseDir string, song *model.Song, audioURL, lyrics string, 
 		}
 	}
 
-	return destPath, nil
+	return destPath, false, nil
 }
 
 // buildSongDir returns {base}/{Artist}/{Album}.

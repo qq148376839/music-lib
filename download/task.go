@@ -29,6 +29,7 @@ type Task struct {
 	FilePath    string     `json:"file_path,omitempty"`
 	Song        model.Song `json:"song"`
 	Status      TaskStatus `json:"status"`
+	Skipped     bool       `json:"skipped"`
 	Progress    int64      `json:"progress"`
 	TotalSize   int64      `json:"total_size"`
 	CreatedAt   time.Time  `json:"created_at"`
@@ -259,7 +260,7 @@ func (m *Manager) runTask(
 		task.Progress = n
 		m.mu.Unlock()
 	}
-	filePath, err := WriteSongToDisk(m.musicDir, &task.Song, audioURL, lyrics, progressFn)
+	filePath, skipped, err := WriteSongToDisk(m.musicDir, &task.Song, audioURL, lyrics, progressFn)
 	if err != nil {
 		m.failTask(task, fmt.Sprintf("write to disk: %v", err))
 		return
@@ -278,6 +279,7 @@ func (m *Manager) runTask(
 	m.mu.Lock()
 	task.Status = StatusCompleted
 	task.FilePath = filePath
+	task.Skipped = skipped
 	task.CompletedAt = &now
 	m.mu.Unlock()
 }

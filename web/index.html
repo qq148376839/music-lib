@@ -71,7 +71,13 @@
                     <button id="playlist-back-btn" class="btn-back">返回列表</button>
                     <div class="detail-header-row">
                         <h3 id="playlist-detail-title" class="detail-title"></h3>
-                        <button id="playlist-batch-download-btn" class="btn-nas btn-small" style="display:none">批量下载到NAS</button>
+                        <div id="playlist-batch-actions" class="batch-download-dropdown" style="display:none">
+                            <button id="playlist-batch-download-btn" class="btn-download btn-small">批量下载</button>
+                            <div id="batch-download-menu" class="download-menu">
+                                <button class="download-menu-item" data-action="browser"><span class="menu-icon">&#8615;</span>浏览器下载</button>
+                                <button class="download-menu-item" data-action="nas"><span class="menu-icon">&#9776;</span>下载到NAS</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div id="playlist-songs" class="results-container"></div>
