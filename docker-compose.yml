@@ -1,6 +1,7 @@
 version: '3.8'
 services:
   music-lib:
+    build: .
     image: music-lib:latest
     container_name: music-lib
     ports:
