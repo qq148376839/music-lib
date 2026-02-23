@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  music-lib:
+    image: music-lib:latest
+    container_name: music-lib
+    ports:
+      - "35280:35280"
+    environment:
+      - MUSIC_DIR=/mnt/music
+    volumes:
+      - /volume1/music:/mnt/music
+      - /volume1/docker/music-lib/config:/app/config
+      - /volume1/docker/music-lib/data:/app/data
+    restart: unless-stopped
