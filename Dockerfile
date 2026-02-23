@@ -18,7 +18,7 @@ ENV TZ=Asia/Shanghai
 
 COPY --from=builder /app/music-lib-server /usr/local/bin/music-lib-server
 
-EXPOSE 8080
-ENV PORT=8080
+EXPOSE 35280
+ENV PORT=35280
 
 ENTRYPOINT ["music-lib-server"]

@@ -35,7 +35,7 @@ docker build -t music-lib .
 ### 运行容器
 
 ```bash
-docker run -d -p 8080:8080 --name music-lib music-lib
+docker run -d -p 35280:35280 --name music-lib music-lib
 ```
 
 自定义端口：
@@ -47,7 +47,7 @@ docker run -d -p 3000:3000 -e PORT=3000 --name music-lib music-lib
 ### 验证服务
 
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:35280/health
 ```
 
 ## HTTP API
@@ -100,13 +100,13 @@ curl http://localhost:8080/health
 **搜索歌曲：**
 
 ```bash
-curl "http://localhost:8080/api/search?source=netease&keyword=周杰伦"
+curl "http://localhost:35280/api/search?source=netease&keyword=周杰伦"
 ```
 
 **获取下载链接：**
 
 ```bash
-curl -X POST "http://localhost:8080/api/download?source=kugou" \
+curl -X POST "http://localhost:35280/api/download?source=kugou" \
   -H "Content-Type: application/json" \
   -d '{"id":"hash_value","source":"kugou","extra":{"hash":"hash_value"}}'
 ```
@@ -114,25 +114,25 @@ curl -X POST "http://localhost:8080/api/download?source=kugou" \
 **解析歌曲链接：**
 
 ```bash
-curl "http://localhost:8080/api/parse?source=netease&link=https://music.163.com/song?id=123456"
+curl "http://localhost:35280/api/parse?source=netease&link=https://music.163.com/song?id=123456"
 ```
 
 **获取推荐歌单：**
 
 ```bash
-curl "http://localhost:8080/api/playlist/recommended?source=kuwo"
+curl "http://localhost:35280/api/playlist/recommended?source=kuwo"
 ```
 
 **搜索歌单：**
 
 ```bash
-curl "http://localhost:8080/api/playlist/search?source=qq&keyword=流行"
+curl "http://localhost:35280/api/playlist/search?source=qq&keyword=流行"
 ```
 
 **获取歌单歌曲：**
 
 ```bash
-curl "http://localhost:8080/api/playlist/songs?source=netease&id=123456"
+curl "http://localhost:35280/api/playlist/songs?source=netease&id=123456"
 ```
 
 ## 作为 Go 库使用
