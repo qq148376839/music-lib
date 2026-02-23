@@ -523,7 +523,7 @@
 
       // Switch to detail view
       dom.playlistList.style.display = 'none';
-      dom.playlistDetail.style.display = '';
+      dom.playlistDetail.style.display = 'block';
     } catch (err) {
       showToast(err.message || '获取歌单歌曲失败');
     }
