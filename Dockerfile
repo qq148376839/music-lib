@@ -4,7 +4,7 @@ FROM golang:1.21-alpine AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
@@ -16,7 +16,9 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
 ENV TZ=Asia/Shanghai
 
+WORKDIR /app
 COPY --from=builder /app/music-lib-server /usr/local/bin/music-lib-server
+COPY web/ /app/web/
 
 EXPOSE 35280
 ENV PORT=35280

@@ -165,6 +165,17 @@ func main() {
 	mux.HandleFunc("/api/playlist/parse", handlePlaylistParse)
 	mux.HandleFunc("/api/playlist/recommended", handlePlaylistRecommended)
 
+	// Serve frontend static files
+	webDir := os.Getenv("WEB_DIR")
+	if webDir == "" {
+		webDir = "web"
+	}
+	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
+		fileServer := http.FileServer(http.Dir(webDir))
+		mux.Handle("/", fileServer)
+		log.Printf("serving frontend from %s", webDir)
+	}
+
 	log.Printf("music-lib API server starting on :%s", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("server failed: %v", err)

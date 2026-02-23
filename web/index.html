@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Lib - 多平台音乐聚合</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="app-header">
+        <h1 class="app-title">Music Lib</h1>
+        <p class="app-subtitle">多平台音乐聚合</p>
+    </header>
+
+    <!-- Controls Bar -->
+    <section class="controls-bar">
+        <label for="provider-select" class="provider-label">音乐平台</label>
+        <select id="provider-select">
+            <option value="all">全部平台</option>
+            <option value="netease">网易云</option>
+            <option value="qq">QQ音乐</option>
+            <option value="kugou">酷狗</option>
+            <option value="kuwo">酷我</option>
+            <option value="migu">咪咕</option>
+            <option value="qianqian">千千</option>
+            <option value="soda">汽水</option>
+            <option value="fivesing">5sing</option>
+            <option value="jamendo">Jamendo</option>
+            <option value="joox">JOOX</option>
+            <option value="bilibili">B站</option>
+        </select>
+    </section>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-bar">
+        <button class="tab-btn active" data-tab="search">搜索歌曲</button>
+        <button class="tab-btn" data-tab="playlist">歌单</button>
+        <button class="tab-btn" data-tab="parse">链接解析</button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="content">
+
+        <!-- Tab: Search Songs -->
+        <section id="tab-search" class="tab-panel active">
+            <div class="search-bar">
+                <input type="text" id="search-input" placeholder="输入歌曲名、歌手..." autocomplete="off">
+                <button id="search-btn" class="btn-primary">搜索</button>
+            </div>
+            <div id="search-results" class="results-container"></div>
+        </section>
+
+        <!-- Tab: Playlist -->
+        <section id="tab-playlist" class="tab-panel">
+            <!-- Playlist Search -->
+            <div class="search-bar">
+                <input type="text" id="playlist-keyword" placeholder="搜索歌单..." autocomplete="off">
+                <button id="playlist-search-btn" class="btn-primary">搜索歌单</button>
+                <button id="playlist-recommend-btn" class="btn-secondary">获取推荐</button>
+            </div>
+
+            <!-- Playlist List -->
+            <div id="playlist-list" class="playlist-grid"></div>
+
+            <!-- Playlist Detail (hidden initially) -->
+            <div id="playlist-detail" class="playlist-detail" style="display:none">
+                <div class="detail-header">
+                    <button id="playlist-back-btn" class="btn-back">返回列表</button>
+                    <h3 id="playlist-detail-title" class="detail-title"></h3>
+                </div>
+                <div id="playlist-songs" class="results-container"></div>
+            </div>
+        </section>
+
+        <!-- Tab: Parse Link -->
+        <section id="tab-parse" class="tab-panel">
+            <div class="parse-form">
+                <textarea id="parse-input" rows="3" placeholder="粘贴歌曲或歌单链接..."></textarea>
+                <div class="parse-options">
+                    <label class="radio-label">
+                        <input type="radio" name="parse-type" value="song" checked>
+                        <span>歌曲</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="parse-type" value="playlist">
+                        <span>歌单</span>
+                    </label>
+                    <button id="parse-btn" class="btn-primary">解析</button>
+                </div>
+            </div>
+            <div id="parse-result" class="results-container"></div>
+        </section>
+
+    </main>
+
+    <!-- Lyrics Modal -->
+    <div id="lyrics-modal" class="modal-overlay">
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+            <h3 id="lyrics-title" class="lyrics-title"></h3>
+            <pre id="lyrics-text" class="lyrics-text"></pre>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loading" class="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
