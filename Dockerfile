@@ -21,5 +21,9 @@ COPY web/ /app/web/
 
 EXPOSE 35280
 ENV PORT=35280
+ENV MUSIC_DIR=""
+ENV DOWNLOAD_CONCURRENCY=3
+
+VOLUME ["/mnt/music"]
 
 ENTRYPOINT ["music-lib-server"]

@@ -83,6 +83,12 @@ func (s *Song) Filename() string {
 	return utils.SanitizeFilename(fmt.Sprintf("%s - %s.%s", s.Artist, s.Name, ext))
 }
 
+// LrcFilename generates a lyrics filename matching the audio: "Artist - Song.lrc"
+func (s *Song) LrcFilename() string {
+	base := utils.SanitizeFilename(fmt.Sprintf("%s - %s", s.Artist, s.Name))
+	return base + ".lrc"
+}
+
 // Display 用于简单的日志打印
 func (s *Song) Display() string {
 	return s.Name + " - " + s.Artist

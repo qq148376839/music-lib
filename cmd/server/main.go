@@ -6,8 +6,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/guohuiyuan/music-lib/bilibili"
+	"github.com/guohuiyuan/music-lib/download"
 	"github.com/guohuiyuan/music-lib/fivesing"
 	"github.com/guohuiyuan/music-lib/jamendo"
 	"github.com/guohuiyuan/music-lib/joox"
@@ -164,6 +166,46 @@ func main() {
 	mux.HandleFunc("/api/playlist/songs", handlePlaylistSongs)
 	mux.HandleFunc("/api/playlist/parse", handlePlaylistParse)
 	mux.HandleFunc("/api/playlist/recommended", handlePlaylistRecommended)
+
+	// --- Download / NAS ---
+	musicDir := os.Getenv("MUSIC_DIR")
+	concurrency := 3
+	if v := os.Getenv("DOWNLOAD_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			concurrency = n
+		}
+	}
+
+	var dlMgr *download.Manager
+	if musicDir != "" {
+		// Validate directory exists and is writable.
+		if err := os.MkdirAll(musicDir, 0755); err != nil {
+			log.Fatalf("MUSIC_DIR %q is not usable: %v", musicDir, err)
+		}
+		dlMgr = download.NewManager(musicDir, concurrency)
+		log.Printf("NAS download enabled: dir=%s concurrency=%d", musicDir, concurrency)
+	} else {
+		log.Printf("NAS download disabled (MUSIC_DIR not set)")
+	}
+
+	// Build provider funcs map for download handlers.
+	dlProviders := make(map[string]download.ProviderFuncs)
+	for name, p := range providers {
+		dlProviders[name] = download.ProviderFuncs{
+			GetDownloadURL: p.GetDownloadURL,
+			GetLyrics:      p.GetLyrics,
+		}
+	}
+
+	dlHandlers := download.NewHandlers(dlMgr, dlProviders)
+
+	mux.HandleFunc("/api/download/file", dlHandlers.HandleProxyDownload)
+	mux.HandleFunc("/api/nas/status", dlHandlers.HandleNASStatus)
+	mux.HandleFunc("/api/nas/download", dlHandlers.HandleNASDownload)
+	mux.HandleFunc("/api/nas/download/batch", dlHandlers.HandleNASBatchDownload)
+	mux.HandleFunc("/api/nas/tasks", dlHandlers.HandleListTasks)
+	mux.HandleFunc("/api/nas/task", dlHandlers.HandleGetTask)
+	mux.HandleFunc("/api/nas/batches", dlHandlers.HandleListBatches)
 
 	// Serve frontend static files
 	webDir := os.Getenv("WEB_DIR")

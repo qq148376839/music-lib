@@ -24,6 +24,7 @@
   ];
 
   const TOAST_DURATION = 2500;
+  const NAS_POLL_INTERVAL = 3000;
 
   // ---------------------------------------------------------------------------
   // DOM references (cached once on load)
@@ -33,6 +34,11 @@
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
   let dom; // populated in init()
+  let nasEnabled = false;
+  let nasTaskPollingTimer = null;
+  let currentPlaylistSongs = [];
+  let currentPlaylistName = '';
+  let currentPlaylistSource = '';
 
   // ---------------------------------------------------------------------------
   // Utility functions
@@ -205,9 +211,15 @@
     // -- actions section --
     const actions = el('div', 'song-actions');
 
-    const btnDownload = el('button', 'btn-download', '下载链接');
-    btnDownload.addEventListener('click', () => handleDownload(song));
+    const btnDownload = el('button', 'btn-download', '下载');
+    btnDownload.addEventListener('click', () => handleBrowserDownload(song));
     actions.appendChild(btnDownload);
+
+    if (nasEnabled) {
+      const btnNas = el('button', 'btn-nas', 'NAS');
+      btnNas.addEventListener('click', () => handleNASDownload(song));
+      actions.appendChild(btnNas);
+    }
 
     const btnLyrics = el('button', 'btn-lyrics', '歌词');
     btnLyrics.addEventListener('click', () => handleLyrics(song));
@@ -289,7 +301,7 @@
 
   function initTabs() {
     const tabBtns = $$('.tab-btn[data-tab]');
-    const tabPanels = [dom.tabSearch, dom.tabPlaylist, dom.tabParse];
+    const tabPanels = [dom.tabSearch, dom.tabPlaylist, dom.tabParse, dom.tabNasTasks];
 
     tabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -302,6 +314,13 @@
         tabPanels.forEach((panel) => {
           panel.classList.toggle('active', panel.id === targetId);
         });
+
+        // Start/stop NAS task polling
+        if (btn.dataset.tab === 'nas-tasks') {
+          startTaskPolling();
+        } else {
+          stopTaskPolling();
+        }
       });
     });
   }
@@ -343,10 +362,65 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Download
+  // Browser Download (proxy through server)
   // ---------------------------------------------------------------------------
 
-  async function handleDownload(song) {
+  async function handleBrowserDownload(song) {
+    const source = song.source || getSelectedSource();
+    if (!source || source === 'all') {
+      showToast('无法确定歌曲来源');
+      return;
+    }
+
+    showLoading();
+    try {
+      const resp = await fetch(
+        `/api/download/file?source=${encodeURIComponent(source)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(song),
+        }
+      );
+
+      if (!resp.ok) {
+        // Try to read error JSON.
+        try {
+          const errData = await resp.json();
+          throw new Error(errData.message || '下载失败');
+        } catch {
+          throw new Error(`下载失败 (HTTP ${resp.status})`);
+        }
+      }
+
+      const blob = await resp.blob();
+      const ext = song.ext || 'mp3';
+      const artist = song.artist || '未知歌手';
+      const name = song.name || '未知歌曲';
+      const filename = `${artist} - ${name}.${ext}`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast('下载已开始');
+    } catch (err) {
+      showToast(err.message || '下载失败');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // NAS Download
+  // ---------------------------------------------------------------------------
+
+  async function handleNASDownload(song) {
     const source = song.source || getSelectedSource();
     if (!source || source === 'all') {
       showToast('无法确定歌曲来源');
@@ -355,41 +429,46 @@
 
     try {
       const data = await apiFetch(
-        `/api/download?source=${encodeURIComponent(source)}`,
+        `/api/nas/download?source=${encodeURIComponent(source)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(song),
         }
       );
-
-      const url = data && data.url;
-      if (!url) {
-        showToast('未获取到下载链接');
-        return;
-      }
-
-      // Open in new tab
-      window.open(url, '_blank');
-
-      // Copy to clipboard
-      try {
-        await navigator.clipboard.writeText(url);
-        showToast('已复制下载链接');
-      } catch {
-        // Clipboard API may be blocked; fall back to legacy method
-        const ta = document.createElement('textarea');
-        ta.value = url;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast('已复制下载链接');
-      }
+      showToast('已加入NAS下载队列');
     } catch (err) {
-      showToast(err.message || '获取下载链接失败');
+      showToast(err.message || 'NAS下载失败');
+    }
+  }
+
+  async function handleNASBatchDownload() {
+    if (!currentPlaylistSongs || currentPlaylistSongs.length === 0) {
+      showToast('歌单无歌曲');
+      return;
+    }
+
+    const source = currentPlaylistSource || getSelectedSource();
+    if (!source || source === 'all') {
+      showToast('无法确定歌曲来源');
+      return;
+    }
+
+    try {
+      const data = await apiFetch(
+        `/api/nas/download/batch?source=${encodeURIComponent(source)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            playlist_name: currentPlaylistName,
+            songs: currentPlaylistSongs,
+          }),
+        }
+      );
+      showToast(`已加入NAS下载队列 (${data.task_count}首)`);
+    } catch (err) {
+      showToast(err.message || '批量下载失败');
     }
   }
 
@@ -515,11 +594,19 @@
         `/api/playlist/songs?source=${encodeURIComponent(source)}&id=${encodeURIComponent(playlist.id)}`
       );
 
+      // Store for batch download.
+      currentPlaylistSongs = songs || [];
+      currentPlaylistName = playlist.name || '';
+      currentPlaylistSource = source;
+
       const cards = (songs || []).map(renderSongCard);
       renderInto(dom.playlistSongs, cards);
 
       // Update detail title
       dom.playlistDetailTitle.textContent = playlist.name || '歌单详情';
+
+      // Show batch download button if NAS is enabled.
+      dom.batchDownloadBtn.style.display = nasEnabled ? '' : 'none';
 
       // Switch to detail view
       dom.playlistList.style.display = 'none';
@@ -595,6 +682,171 @@
   }
 
   // ---------------------------------------------------------------------------
+  // NAS Status & Task Polling
+  // ---------------------------------------------------------------------------
+
+  async function checkNASStatus() {
+    try {
+      const data = await apiFetch('/api/nas/status', {}, true);
+      nasEnabled = data && data.enabled;
+      if (dom.nasStatusBadge) {
+        if (nasEnabled) {
+          dom.nasStatusBadge.textContent = `NAS已启用 (${data.music_dir})`;
+          dom.nasStatusBadge.className = 'nas-status-badge enabled';
+        } else {
+          dom.nasStatusBadge.textContent = 'NAS未启用';
+          dom.nasStatusBadge.className = 'nas-status-badge disabled';
+        }
+      }
+    } catch {
+      nasEnabled = false;
+    }
+  }
+
+  function startTaskPolling() {
+    stopTaskPolling();
+    refreshNASTasks();
+    nasTaskPollingTimer = setInterval(refreshNASTasks, NAS_POLL_INTERVAL);
+  }
+
+  function stopTaskPolling() {
+    if (nasTaskPollingTimer) {
+      clearInterval(nasTaskPollingTimer);
+      nasTaskPollingTimer = null;
+    }
+  }
+
+  async function refreshNASTasks() {
+    try {
+      const [tasks, batches] = await Promise.all([
+        apiFetch('/api/nas/tasks', {}, true),
+        apiFetch('/api/nas/batches', {}, true),
+      ]);
+      renderBatchSummary(batches || []);
+      renderNASTaskPanel(tasks || []);
+    } catch {
+      // Silent fail for polling.
+    }
+  }
+
+  function renderNASTaskPanel(tasks) {
+    const container = dom.nasTaskList;
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (tasks.length === 0) {
+      container.appendChild(el('div', 'empty-state', '暂无下载任务'));
+      return;
+    }
+
+    // Show newest first.
+    const reversed = [...tasks].reverse();
+    const frag = document.createDocumentFragment();
+    for (const task of reversed) {
+      frag.appendChild(renderTaskCard(task));
+    }
+    container.appendChild(frag);
+  }
+
+  function renderTaskCard(task) {
+    const card = el('div', 'task-card');
+
+    const header = el('div', 'task-card-header');
+    const songName = el('div', 'song-name', task.song ? (task.song.name || '未知') : '未知');
+    header.appendChild(songName);
+
+    const statusLabels = {
+      pending: '等待中',
+      running: '下载中',
+      completed: '已完成',
+      failed: '失败',
+    };
+    const badge = el('span', `task-status ${task.status}`, statusLabels[task.status] || task.status);
+    header.appendChild(badge);
+    card.appendChild(header);
+
+    const meta = el('div', 'song-meta');
+    const parts = [];
+    if (task.song && task.song.artist) parts.push(task.song.artist);
+    if (task.source) parts.push(getSourceName(task.source));
+    meta.textContent = parts.join(' \u00b7 ');
+    card.appendChild(meta);
+
+    // Progress bar for running tasks.
+    if (task.status === 'running') {
+      const track = el('div', 'progress-bar-track');
+      const fill = el('div', 'progress-bar-fill');
+      const pct = task.total_size > 0 ? Math.min(100, Math.round(task.progress / task.total_size * 100)) : 0;
+      fill.style.width = pct + '%';
+      track.appendChild(fill);
+      card.appendChild(track);
+
+      const progressText = el('div', 'progress-text');
+      if (task.progress > 0) {
+        progressText.textContent = formatSize(task.progress) + (task.total_size > 0 ? ` / ${formatSize(task.total_size)}` : '');
+      } else {
+        progressText.textContent = '下载中...';
+      }
+      card.appendChild(progressText);
+    }
+
+    // Error message for failed tasks.
+    if (task.status === 'failed' && task.error) {
+      const errEl = el('div', 'task-error', task.error);
+      card.appendChild(errEl);
+    }
+
+    // File path for completed tasks.
+    if (task.status === 'completed' && task.file_path) {
+      const pathEl = el('div', 'progress-text', task.file_path);
+      card.appendChild(pathEl);
+    }
+
+    return card;
+  }
+
+  function renderBatchSummary(batches) {
+    const container = dom.nasBatches;
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (batches.length === 0) return;
+
+    const frag = document.createDocumentFragment();
+    // Show newest first.
+    const reversed = [...batches].reverse();
+    for (const batch of reversed) {
+      const card = el('div', 'batch-card');
+
+      const header = el('div', 'batch-card-header');
+      header.appendChild(el('span', 'batch-name', batch.playlist_name || batch.id));
+      const stats = `${batch.completed}/${batch.total} 完成`;
+      const extra = [];
+      if (batch.running > 0) extra.push(`${batch.running}下载中`);
+      if (batch.failed > 0) extra.push(`${batch.failed}失败`);
+      const statsText = stats + (extra.length ? ` (${extra.join(', ')})` : '');
+      header.appendChild(el('span', 'batch-stats', statsText));
+      card.appendChild(header);
+
+      // Progress bar.
+      const track = el('div', 'progress-bar-track');
+      const fill = el('div', 'progress-bar-fill');
+      const pct = batch.total > 0 ? Math.round((batch.completed + batch.failed) / batch.total * 100) : 0;
+      fill.style.width = pct + '%';
+      if (batch.failed > 0 && batch.completed === 0) {
+        fill.style.backgroundColor = '#f85149';
+      } else if (batch.completed === batch.total) {
+        fill.style.backgroundColor = '#3fb950';
+      }
+      track.appendChild(fill);
+      card.appendChild(track);
+
+      frag.appendChild(card);
+    }
+    container.appendChild(frag);
+  }
+
+  // ---------------------------------------------------------------------------
   // Keyboard shortcuts
   // ---------------------------------------------------------------------------
 
@@ -649,6 +901,7 @@
       tabSearch:          $('#tab-search'),
       tabPlaylist:        $('#tab-playlist'),
       tabParse:           $('#tab-parse'),
+      tabNasTasks:        $('#tab-nas-tasks'),
       searchInput:        $('#search-input'),
       searchBtn:          $('#search-btn'),
       searchResults:      $('#search-results'),
@@ -660,6 +913,7 @@
       playlistSongs:      $('#playlist-songs'),
       playlistDetailTitle: $('#playlist-detail-title'),
       playlistBackBtn:    $('#playlist-back-btn'),
+      batchDownloadBtn:   $('#playlist-batch-download-btn'),
       parseInput:         $('#parse-input'),
       parseBtn:           $('#parse-btn'),
       parseResult:        $('#parse-result'),
@@ -669,6 +923,9 @@
       lyricsText:         $('#lyrics-text'),
       toast:              $('#toast'),
       loading:            $('#loading'),
+      nasStatusBadge:     $('#nas-status-badge'),
+      nasBatches:         $('#nas-batches'),
+      nasTaskList:        $('#nas-task-list'),
     };
 
     // --- Tabs ---
@@ -682,6 +939,11 @@
     dom.playlistRecommendBtn.addEventListener('click', doPlaylistRecommend);
     dom.playlistBackBtn.addEventListener('click', handlePlaylistBack);
 
+    // --- Batch download ---
+    if (dom.batchDownloadBtn) {
+      dom.batchDownloadBtn.addEventListener('click', handleNASBatchDownload);
+    }
+
     // --- Parse ---
     dom.parseBtn.addEventListener('click', doParse);
 
@@ -690,6 +952,9 @@
 
     // --- Keyboard ---
     initKeyboard();
+
+    // --- NAS status ---
+    checkNASStatus();
   }
 
   // Boot

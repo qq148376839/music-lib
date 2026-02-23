@@ -38,6 +38,7 @@
         <button class="tab-btn active" data-tab="search">搜索歌曲</button>
         <button class="tab-btn" data-tab="playlist">歌单</button>
         <button class="tab-btn" data-tab="parse">链接解析</button>
+        <button class="tab-btn" data-tab="nas-tasks">NAS下载</button>
     </nav>
 
     <!-- Main Content -->
@@ -68,7 +69,10 @@
             <div id="playlist-detail" class="playlist-detail" style="display:none">
                 <div class="detail-header">
                     <button id="playlist-back-btn" class="btn-back">返回列表</button>
-                    <h3 id="playlist-detail-title" class="detail-title"></h3>
+                    <div class="detail-header-row">
+                        <h3 id="playlist-detail-title" class="detail-title"></h3>
+                        <button id="playlist-batch-download-btn" class="btn-nas btn-small" style="display:none">批量下载到NAS</button>
+                    </div>
                 </div>
                 <div id="playlist-songs" class="results-container"></div>
             </div>
@@ -91,6 +95,17 @@
                 </div>
             </div>
             <div id="parse-result" class="results-container"></div>
+        </section>
+
+        <!-- Tab: NAS Tasks -->
+        <section id="tab-nas-tasks" class="tab-panel">
+            <div class="nas-header">
+                <div class="nas-header-info">
+                    <span id="nas-status-badge" class="nas-status-badge disabled">NAS未启用</span>
+                </div>
+            </div>
+            <div id="nas-batches" class="nas-batches"></div>
+            <div id="nas-task-list" class="nas-task-list"></div>
         </section>
 
     </main>
