@@ -4,8 +4,7 @@ FROM golang:1.21-alpine AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
+COPY go.mod ./
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/music-lib-server ./cmd/server
