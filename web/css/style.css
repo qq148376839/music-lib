@@ -77,6 +77,151 @@ body {
 }
 
 /* ----------------------------------------------------------
+   Login Button & Status
+   ---------------------------------------------------------- */
+
+.login-status {
+  position: absolute;
+  top: 50%;
+  right: 1.5rem;
+  transform: translateY(-50%);
+}
+
+.app-header {
+  position: relative;
+}
+
+.btn-login {
+  background: transparent;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s, background-color 0.2s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+
+.btn-login:hover {
+  color: #f0f6fc;
+  border-color: #58a6ff;
+  background-color: rgba(88, 166, 255, 0.08);
+}
+
+.btn-login.logged-in {
+  color: #3fb950;
+  border-color: #3fb950;
+}
+
+.btn-login.logged-in:hover {
+  background-color: rgba(63, 185, 80, 0.08);
+}
+
+/* ----------------------------------------------------------
+   QR Login Modal
+   ---------------------------------------------------------- */
+
+#qr-modal {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: none;
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+#qr-modal.show {
+  display: flex;
+}
+
+.qr-modal-content {
+  max-width: 360px;
+  text-align: center;
+}
+
+.qr-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #f0f6fc;
+  padding-right: 24px;
+}
+
+.qr-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  margin: 0 auto 16px;
+  background-color: #ffffff;
+  border-radius: 12px;
+  padding: 16px;
+  width: fit-content;
+}
+
+.qr-image svg,
+.qr-image img {
+  display: block;
+}
+
+.qr-status {
+  font-size: 14px;
+  color: #8b949e;
+  margin-bottom: 8px;
+  min-height: 24px;
+}
+
+.qr-status.scanned {
+  color: #58a6ff;
+}
+
+.qr-status.success {
+  color: #3fb950;
+}
+
+.qr-status.expired {
+  color: #f85149;
+}
+
+.qr-logged-in {
+  margin-top: 16px;
+}
+
+.qr-user-info {
+  font-size: 15px;
+  color: #f0f6fc;
+  margin-bottom: 12px;
+}
+
+.qr-nickname {
+  font-weight: 600;
+  color: #58a6ff;
+}
+
+.btn-logout {
+  background: transparent;
+  color: #f85149;
+  border: 1px solid #f85149;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-logout:hover {
+  background-color: rgba(248, 81, 73, 0.15);
+}
+
+/* ----------------------------------------------------------
    Layout — Controls
    ---------------------------------------------------------- */
 
@@ -1089,6 +1234,17 @@ a:hover {
 
   .app-title {
     font-size: 1.2rem;
+  }
+
+  .login-status {
+    position: static;
+    transform: none;
+    text-align: center;
+    margin-top: 8px;
+  }
+
+  .qr-modal-content {
+    width: 95%;
   }
 
   .tab-btn {

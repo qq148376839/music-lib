@@ -40,6 +40,9 @@
   let currentPlaylistSongs = [];
   let currentPlaylistName = '';
   let currentPlaylistSource = '';
+  let qrPollingTimer = null;
+  let neteaseLoggedIn = false;
+  let neteaseNickname = '';
 
   // ---------------------------------------------------------------------------
   // Utility functions
@@ -991,6 +994,154 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Netease QR Login
+  // ---------------------------------------------------------------------------
+
+  async function checkLoginStatus() {
+    try {
+      const data = await apiFetch('/api/netease/login/status', {}, true);
+      neteaseLoggedIn = data && data.logged_in;
+      neteaseNickname = (data && data.nickname) || '';
+      updateLoginButton();
+    } catch {
+      neteaseLoggedIn = false;
+      neteaseNickname = '';
+      updateLoginButton();
+    }
+  }
+
+  function updateLoginButton() {
+    if (!dom.loginBtn || !dom.loginText) return;
+    if (neteaseLoggedIn) {
+      dom.loginText.textContent = neteaseNickname || '已登录';
+      dom.loginBtn.classList.add('logged-in');
+      dom.loginBtn.title = '点击管理网易云登录';
+    } else {
+      dom.loginText.textContent = '网易云登录';
+      dom.loginBtn.classList.remove('logged-in');
+      dom.loginBtn.title = '网易云登录';
+    }
+  }
+
+  function openQRModal() {
+    dom.qrModal.classList.add('show');
+    if (neteaseLoggedIn) {
+      showLoggedInState();
+    } else {
+      showQRCodeState();
+    }
+  }
+
+  function closeQRModal() {
+    dom.qrModal.classList.remove('show');
+    stopQRPolling();
+  }
+
+  function showLoggedInState() {
+    dom.qrImage.innerHTML = '';
+    dom.qrImage.style.display = 'none';
+    dom.qrStatus.style.display = 'none';
+    dom.qrLoggedIn.style.display = '';
+    dom.qrNickname.textContent = neteaseNickname;
+  }
+
+  async function showQRCodeState() {
+    dom.qrLoggedIn.style.display = 'none';
+    dom.qrImage.style.display = '';
+    dom.qrImage.innerHTML = '';
+    dom.qrStatus.style.display = '';
+    dom.qrStatus.textContent = '正在生成二维码...';
+    dom.qrStatus.className = 'qr-status';
+
+    try {
+      const data = await apiFetch('/api/netease/qr/key', {}, true);
+      if (!data || !data.unikey) {
+        dom.qrStatus.textContent = '生成二维码失败';
+        dom.qrStatus.className = 'qr-status expired';
+        return;
+      }
+
+      // Generate QR code using qrcode-generator
+      dom.qrImage.innerHTML = '';
+      var qr = qrcode(0, 'M');
+      qr.addData(data.qr_url);
+      qr.make();
+      dom.qrImage.innerHTML = qr.createSvgTag(5, 0);
+
+      dom.qrStatus.textContent = '请使用网易云音乐App扫码';
+      dom.qrStatus.className = 'qr-status';
+
+      // Start polling
+      startQRPolling(data.unikey);
+    } catch (err) {
+      dom.qrStatus.textContent = err.message || '生成二维码失败';
+      dom.qrStatus.className = 'qr-status expired';
+    }
+  }
+
+  function startQRPolling(unikey) {
+    stopQRPolling();
+    qrPollingTimer = setInterval(async () => {
+      try {
+        const data = await apiFetch(
+          `/api/netease/qr/check?key=${encodeURIComponent(unikey)}`,
+          {},
+          true
+        );
+        if (!data) return;
+
+        switch (data.code) {
+          case 801:
+            dom.qrStatus.textContent = '等待扫码...';
+            dom.qrStatus.className = 'qr-status';
+            break;
+          case 802:
+            dom.qrStatus.textContent = '已扫码，请在手机上确认';
+            dom.qrStatus.className = 'qr-status scanned';
+            break;
+          case 803:
+            dom.qrStatus.textContent = '登录成功！';
+            dom.qrStatus.className = 'qr-status success';
+            stopQRPolling();
+            neteaseLoggedIn = true;
+            neteaseNickname = data.nickname || '';
+            updateLoginButton();
+            setTimeout(() => closeQRModal(), 1200);
+            break;
+          case 800:
+            dom.qrStatus.textContent = '二维码已过期，正在重新生成...';
+            dom.qrStatus.className = 'qr-status expired';
+            stopQRPolling();
+            setTimeout(() => showQRCodeState(), 1500);
+            break;
+        }
+      } catch {
+        // Silent fail for polling
+      }
+    }, 2000);
+  }
+
+  function stopQRPolling() {
+    if (qrPollingTimer) {
+      clearInterval(qrPollingTimer);
+      qrPollingTimer = null;
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await apiFetch('/api/netease/logout', { method: 'POST' });
+      neteaseLoggedIn = false;
+      neteaseNickname = '';
+      updateLoginButton();
+      closeQRModal();
+      showToast('已退出网易云登录');
+    } catch (err) {
+      showToast(err.message || '退出登录失败');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Keyboard shortcuts
   // ---------------------------------------------------------------------------
 
@@ -1012,6 +1163,7 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         closeLyricsModal();
+        closeQRModal();
       }
     });
   }
@@ -1073,6 +1225,15 @@
       nasBatches:         $('#nas-batches'),
       nasTaskList:        $('#nas-task-list'),
       nasTaskBadge:       $('#nas-task-badge'),
+      loginBtn:           $('#login-btn'),
+      loginText:          $('#login-text'),
+      qrModal:            $('#qr-modal'),
+      qrModalClose:       $('#qr-modal-close'),
+      qrImage:            $('#qr-image'),
+      qrStatus:           $('#qr-status'),
+      qrLoggedIn:         $('#qr-logged-in'),
+      qrNickname:         $('#qr-nickname'),
+      logoutBtn:          $('#logout-btn'),
     };
 
     // --- Tabs ---
@@ -1125,6 +1286,23 @@
 
     // --- NAS status ---
     checkNASStatus();
+
+    // --- Netease Login ---
+    if (dom.loginBtn) {
+      dom.loginBtn.addEventListener('click', openQRModal);
+    }
+    if (dom.qrModalClose) {
+      dom.qrModalClose.addEventListener('click', closeQRModal);
+    }
+    if (dom.qrModal) {
+      dom.qrModal.addEventListener('click', (e) => {
+        if (e.target === dom.qrModal) closeQRModal();
+      });
+    }
+    if (dom.logoutBtn) {
+      dom.logoutBtn.addEventListener('click', handleLogout);
+    }
+    checkLoginStatus();
   }
 
   // Boot

@@ -63,6 +63,24 @@ docker run -d -p 35280:35280 \
 | `MUSIC_DIR` | 未设置（NAS 禁用） | 音乐文件存储目录 |
 | `DOWNLOAD_CONCURRENCY` | `3` | NAS 并发下载数 |
 | `WEB_DIR` | `web` | 前端静态文件目录 |
+| `CONFIG_DIR` | `config`（Docker 下 `/app/config`） | 配置文件目录（Cookie 持久化） |
+
+### 网易云扫码登录
+
+Web UI Header 右上角提供网易云扫码登录按钮。登录后获取 `MUSIC_U` 等认证 Cookie，后续网易云接口以登录态调用，可解锁 VIP/版权受限内容的搜索与下载。
+
+- 点击「网易云登录」按钮 → 弹出二维码 → 用网易云音乐 App 扫码确认
+- 登录成功后 Cookie 持久化到 `{CONFIG_DIR}/netease_cookie.json`，容器重启不丢失
+- Docker 部署时建议映射 config 目录以持久化登录状态：
+
+```bash
+docker run -d -p 35280:35280 \
+  -e MUSIC_DIR=/music \
+  -e CONFIG_DIR=/app/config \
+  -v /your/nas/music:/music \
+  -v /your/nas/config:/app/config \
+  --name music-lib music-lib
+```
 
 ### 跨平台回退下载
 
@@ -125,6 +143,15 @@ curl http://localhost:35280/health
 | GET | `/api/playlist/songs` | `source`, `id` | 获取歌单内歌曲列表 |
 | GET | `/api/playlist/parse` | `source`, `link` | 解析歌单链接 |
 | GET | `/api/playlist/recommended` | `source` | 获取推荐歌单 |
+
+### 网易云登录接口
+
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| GET | `/api/netease/qr/key` | — | 生成二维码 unikey 和 URL |
+| GET | `/api/netease/qr/check` | `key` | 轮询扫码状态（801/802/803/800） |
+| GET | `/api/netease/login/status` | — | 检查当前登录状态 |
+| POST | `/api/netease/logout` | — | 清除登录 Cookie |
 
 ### 下载接口
 

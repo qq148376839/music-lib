@@ -30,23 +30,22 @@ func New(cookie string) *Netease { return &Netease{cookie: cookie} }
 
 var defaultNetease = New("")
 
-func Search(keyword string) ([]model.Song, error) { return defaultNetease.Search(keyword) }
+func Search(keyword string) ([]model.Song, error) { return getDefault().Search(keyword) }
 func SearchPlaylist(keyword string) ([]model.Playlist, error) {
-	return defaultNetease.SearchPlaylist(keyword)
+	return getDefault().SearchPlaylist(keyword)
 }
 func GetPlaylistSongs(playlistID string) ([]model.Song, error) {
-	return defaultNetease.GetPlaylistSongs(playlistID)
+	return getDefault().GetPlaylistSongs(playlistID)
 }
 func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
-	return defaultNetease.ParsePlaylist(link)
+	return getDefault().ParsePlaylist(link)
 }
-func GetDownloadURL(s *model.Song) (string, error) { return defaultNetease.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error)      { return defaultNetease.GetLyrics(s) }
-func Parse(link string) (*model.Song, error)       { return defaultNetease.Parse(link) }
+func GetDownloadURL(s *model.Song) (string, error) { return getDefault().GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)      { return getDefault().GetLyrics(s) }
+func Parse(link string) (*model.Song, error)       { return getDefault().Parse(link) }
 
-// GetRecommendedPlaylists 新增：获取推荐歌单（无需登录）
 func GetRecommendedPlaylists() ([]model.Playlist, error) {
-	return defaultNetease.GetRecommendedPlaylists()
+	return getDefault().GetRecommendedPlaylists()
 }
 
 // Search 搜索歌曲

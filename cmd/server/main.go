@@ -147,6 +147,17 @@ func main() {
 		port = "35280"
 	}
 
+	// --- Netease cookie persistence ---
+	cfgDir := os.Getenv("CONFIG_DIR")
+	if cfgDir == "" {
+		cfgDir = "config"
+	}
+	netease.SetConfigDir(cfgDir)
+	netease.LoadCookieFromDisk()
+	if loggedIn, nickname := netease.GetLoginStatus(); loggedIn {
+		log.Printf("netease cookie loaded (user: %s)", nickname)
+	}
+
 	mux := http.NewServeMux()
 
 	// Health check
@@ -165,6 +176,12 @@ func main() {
 	mux.HandleFunc("/api/playlist/songs", handlePlaylistSongs)
 	mux.HandleFunc("/api/playlist/parse", handlePlaylistParse)
 	mux.HandleFunc("/api/playlist/recommended", handlePlaylistRecommended)
+
+	// --- Netease QR Login ---
+	mux.HandleFunc("/api/netease/qr/key", handleNeteaseQRKey)
+	mux.HandleFunc("/api/netease/qr/check", handleNeteaseQRCheck)
+	mux.HandleFunc("/api/netease/login/status", handleNeteaseLoginStatus)
+	mux.HandleFunc("/api/netease/logout", handleNeteaseLogout)
 
 	// --- Download / NAS ---
 	musicDir := os.Getenv("MUSIC_DIR")
@@ -454,4 +471,53 @@ func handlePlaylistRecommended(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, playlists)
+}
+
+// --- Netease QR Login Handlers ---
+
+// GET /api/netease/qr/key
+func handleNeteaseQRKey(w http.ResponseWriter, r *http.Request) {
+	unikey, err := netease.GenerateQRKey()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	qrURL := "https://music.163.com/login?codekey=" + unikey
+	writeOK(w, map[string]string{
+		"unikey": unikey,
+		"qr_url": qrURL,
+	})
+}
+
+// GET /api/netease/qr/check?key=xxx
+func handleNeteaseQRCheck(w http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+	if key == "" {
+		writeError(w, http.StatusBadRequest, "missing key parameter")
+		return
+	}
+	code, _, nickname, err := netease.QRLoginStatus(key)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeOK(w, map[string]interface{}{
+		"code":     code,
+		"nickname": nickname,
+	})
+}
+
+// GET /api/netease/login/status
+func handleNeteaseLoginStatus(w http.ResponseWriter, r *http.Request) {
+	loggedIn, nickname := netease.GetLoginStatus()
+	writeOK(w, map[string]interface{}{
+		"logged_in": loggedIn,
+		"nickname":  nickname,
+	})
+}
+
+// POST /api/netease/logout
+func handleNeteaseLogout(w http.ResponseWriter, r *http.Request) {
+	netease.Logout()
+	writeOK(w, map[string]string{"status": "ok"})
 }

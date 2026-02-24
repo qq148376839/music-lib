@@ -81,6 +81,23 @@ func Post(url string, body io.Reader, opts ...RequestOption) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
+// PostRaw 发送 HTTP POST 请求并返回原始 *http.Response
+// 调用方负责关闭 resp.Body 和提取 Cookie
+func PostRaw(url string, body io.Reader, opts ...RequestOption) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	for _, opt := range opts {
+		opt(req)
+	}
+
+	return defaultClient.Do(req)
+}
+
 // MD5 计算字符串哈希
 func MD5(str string) string {
 	h := md5.New()
