@@ -15,6 +15,7 @@ import (
 	"github.com/guohuiyuan/music-lib/joox"
 	"github.com/guohuiyuan/music-lib/kugou"
 	"github.com/guohuiyuan/music-lib/kuwo"
+	"github.com/guohuiyuan/music-lib/login"
 	"github.com/guohuiyuan/music-lib/migu"
 	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/netease"
@@ -141,22 +142,58 @@ func init() {
 	}
 }
 
+var loginMgr *login.Manager
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "35280"
 	}
 
-	// --- Netease cookie persistence ---
+	// --- Cookie persistence ---
 	cfgDir := os.Getenv("CONFIG_DIR")
 	if cfgDir == "" {
 		cfgDir = "config"
 	}
+
+	// Netease
 	netease.SetConfigDir(cfgDir)
 	netease.LoadCookieFromDisk()
 	if loggedIn, nickname := netease.GetLoginStatus(); loggedIn {
 		log.Printf("netease cookie loaded (user: %s)", nickname)
 	}
+
+	// QQ
+	qq.SetConfigDir(cfgDir)
+	qq.LoadCookieFromDisk()
+	if loggedIn, nickname := qq.GetLoginStatus(); loggedIn {
+		log.Printf("qq cookie loaded (user: %s)", nickname)
+	}
+
+	// --- Login manager ---
+	scriptPath := os.Getenv("LOGIN_SCRIPT")
+	if scriptPath == "" {
+		scriptPath = "scripts/login_helper.py"
+	}
+	pythonPath := os.Getenv("PYTHON_PATH")
+	if pythonPath == "" {
+		pythonPath = "python3"
+	}
+
+	loginMgr = login.NewManager(scriptPath, pythonPath, func(platform, cookies, nickname string) {
+		switch platform {
+		case "netease":
+			netease.SetCookie(cookies)
+			if err := netease.SaveCookieToDisk(cookies, nickname); err != nil {
+				log.Printf("failed to save netease cookie: %v", err)
+			}
+		case "qq":
+			qq.SetCookie(cookies)
+			if err := qq.SaveCookieToDisk(cookies, nickname); err != nil {
+				log.Printf("failed to save qq cookie: %v", err)
+			}
+		}
+	})
 
 	mux := http.NewServeMux()
 
@@ -177,11 +214,11 @@ func main() {
 	mux.HandleFunc("/api/playlist/parse", handlePlaylistParse)
 	mux.HandleFunc("/api/playlist/recommended", handlePlaylistRecommended)
 
-	// --- Netease QR Login ---
-	mux.HandleFunc("/api/netease/qr/key", handleNeteaseQRKey)
-	mux.HandleFunc("/api/netease/qr/check", handleNeteaseQRCheck)
-	mux.HandleFunc("/api/netease/login/status", handleNeteaseLoginStatus)
-	mux.HandleFunc("/api/netease/logout", handleNeteaseLogout)
+	// --- Unified Login API ---
+	mux.HandleFunc("/api/login/qr/start", handleLoginQRStart)
+	mux.HandleFunc("/api/login/qr/poll", handleLoginQRPoll)
+	mux.HandleFunc("/api/login/status", handleLoginStatus)
+	mux.HandleFunc("/api/login/logout", handleLoginLogout)
 
 	// --- Download / NAS ---
 	musicDir := os.Getenv("MUSIC_DIR")
@@ -473,51 +510,78 @@ func handlePlaylistRecommended(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, playlists)
 }
 
-// --- Netease QR Login Handlers ---
+// --- Unified Login Handlers ---
 
-// GET /api/netease/qr/key
-func handleNeteaseQRKey(w http.ResponseWriter, r *http.Request) {
-	unikey, err := netease.GenerateQRKey()
-	if err != nil {
+// POST /api/login/qr/start?platform=netease|qq
+func handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	platform := r.URL.Query().Get("platform")
+	if platform != "netease" && platform != "qq" {
+		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
+		return
+	}
+	if err := loginMgr.StartLogin(platform); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	qrURL := "https://music.163.com/login?codekey=" + unikey
-	writeOK(w, map[string]string{
-		"unikey": unikey,
-		"qr_url": qrURL,
-	})
+	writeOK(w, map[string]string{"status": "started"})
 }
 
-// GET /api/netease/qr/check?key=xxx
-func handleNeteaseQRCheck(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Query().Get("key")
-	if key == "" {
-		writeError(w, http.StatusBadRequest, "missing key parameter")
+// GET /api/login/qr/poll?platform=netease|qq
+func handleLoginQRPoll(w http.ResponseWriter, r *http.Request) {
+	platform := r.URL.Query().Get("platform")
+	if platform != "netease" && platform != "qq" {
+		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
 		return
 	}
-	code, _, nickname, err := netease.QRLoginStatus(key)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+	state, qrImage, nickname, errMsg := loginMgr.GetStatus(platform)
 	writeOK(w, map[string]interface{}{
-		"code":     code,
+		"state":    string(state),
+		"qr_image": qrImage,
 		"nickname": nickname,
+		"error":    errMsg,
 	})
 }
 
-// GET /api/netease/login/status
-func handleNeteaseLoginStatus(w http.ResponseWriter, r *http.Request) {
-	loggedIn, nickname := netease.GetLoginStatus()
-	writeOK(w, map[string]interface{}{
-		"logged_in": loggedIn,
-		"nickname":  nickname,
-	})
+// GET /api/login/status?platform=netease|qq
+func handleLoginStatus(w http.ResponseWriter, r *http.Request) {
+	platform := r.URL.Query().Get("platform")
+	switch platform {
+	case "netease":
+		loggedIn, nickname := netease.GetLoginStatus()
+		writeOK(w, map[string]interface{}{
+			"logged_in": loggedIn,
+			"nickname":  nickname,
+		})
+	case "qq":
+		loggedIn, nickname := qq.GetLoginStatus()
+		writeOK(w, map[string]interface{}{
+			"logged_in": loggedIn,
+			"nickname":  nickname,
+		})
+	default:
+		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
+	}
 }
 
-// POST /api/netease/logout
-func handleNeteaseLogout(w http.ResponseWriter, r *http.Request) {
-	netease.Logout()
-	writeOK(w, map[string]string{"status": "ok"})
+// POST /api/login/logout?platform=netease|qq
+func handleLoginLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	platform := r.URL.Query().Get("platform")
+	switch platform {
+	case "netease":
+		netease.Logout()
+		writeOK(w, map[string]string{"status": "ok"})
+	case "qq":
+		qq.Logout()
+		writeOK(w, map[string]string{"status": "ok"})
+	default:
+		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
+	}
 }

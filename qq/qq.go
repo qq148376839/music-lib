@@ -32,23 +32,25 @@ func New(cookie string) *QQ { return &QQ{cookie: cookie} }
 
 var defaultQQ = New("")
 
-func Search(keyword string) ([]model.Song, error) { return defaultQQ.Search(keyword) }
+func Search(keyword string) ([]model.Song, error) { return getDefault().Search(keyword) }
 func SearchPlaylist(keyword string) ([]model.Playlist, error) {
-	return defaultQQ.SearchPlaylist(keyword)
+	return getDefault().SearchPlaylist(keyword)
 }
 func GetPlaylistSongs(id string) ([]model.Song, error) {
-	_, songs, err := defaultQQ.fetchPlaylistDetail(id)
+	_, songs, err := getDefault().fetchPlaylistDetail(id)
 	return songs, err
 }
 func ParsePlaylist(link string) (*model.Playlist, []model.Song, error) {
-	return defaultQQ.ParsePlaylist(link)
+	return getDefault().ParsePlaylist(link)
 }
-func GetDownloadURL(s *model.Song) (string, error) { return defaultQQ.GetDownloadURL(s) }
-func GetLyrics(s *model.Song) (string, error)      { return defaultQQ.GetLyrics(s) }
-func Parse(link string) (*model.Song, error)       { return defaultQQ.Parse(link) }
+func GetDownloadURL(s *model.Song) (string, error) { return getDefault().GetDownloadURL(s) }
+func GetLyrics(s *model.Song) (string, error)      { return getDefault().GetLyrics(s) }
+func Parse(link string) (*model.Song, error)        { return getDefault().Parse(link) }
 
 // GetRecommendedPlaylists 获取推荐歌单
-func GetRecommendedPlaylists() ([]model.Playlist, error) { return defaultQQ.GetRecommendedPlaylists() }
+func GetRecommendedPlaylists() ([]model.Playlist, error) {
+	return getDefault().GetRecommendedPlaylists()
+}
 
 // Search 搜索歌曲
 func (q *QQ) Search(keyword string) ([]model.Song, error) {

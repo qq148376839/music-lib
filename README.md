@@ -64,14 +64,21 @@ docker run -d -p 35280:35280 \
 | `DOWNLOAD_CONCURRENCY` | `3` | NAS 并发下载数 |
 | `WEB_DIR` | `web` | 前端静态文件目录 |
 | `CONFIG_DIR` | `config`（Docker 下 `/app/config`） | 配置文件目录（Cookie 持久化） |
+| `LOGIN_SCRIPT` | `scripts/login_helper.py`（Docker 下 `/app/scripts/login_helper.py`） | Playwright 登录脚本路径 |
 
-### 网易云扫码登录
+### 扫码登录（网易云 + QQ 音乐）
 
-Web UI Header 右上角提供网易云扫码登录按钮。登录后获取 `MUSIC_U` 等认证 Cookie，后续网易云接口以登录态调用，可解锁 VIP/版权受限内容的搜索与下载。
+Web UI Header 右上角提供网易云和 QQ 音乐两个扫码登录按钮。通过 Playwright 在 Docker 容器内启动 headless Chromium，截取登录页二维码发送到前端，用户扫码后自动提取 Cookie 并持久化。
 
-- 点击「网易云登录」按钮 → 弹出二维码 → 用网易云音乐 App 扫码确认
-- 登录成功后 Cookie 持久化到 `{CONFIG_DIR}/netease_cookie.json`，容器重启不丢失
-- Docker 部署时建议映射 config 目录以持久化登录状态：
+**网易云音乐登录：**
+- 登录后获取 `MUSIC_U` 等认证 Cookie，可解锁 VIP/版权受限内容的搜索与下载
+- Cookie 持久化到 `{CONFIG_DIR}/netease_cookie.json`
+
+**QQ 音乐登录：**
+- 登录后获取 `qqmusic_key`/`qm_keyst` 等认证 Cookie
+- Cookie 持久化到 `{CONFIG_DIR}/qq_cookie.json`
+
+Docker 部署时建议映射 config 目录以持久化登录状态：
 
 ```bash
 docker run -d -p 35280:35280 \
@@ -144,14 +151,14 @@ curl http://localhost:35280/health
 | GET | `/api/playlist/parse` | `source`, `link` | 解析歌单链接 |
 | GET | `/api/playlist/recommended` | `source` | 获取推荐歌单 |
 
-### 网易云登录接口
+### 登录接口（统一，支持 netease / qq）
 
 | 方法 | 路径 | 参数 | 说明 |
 |------|------|------|------|
-| GET | `/api/netease/qr/key` | — | 生成二维码 unikey 和 URL |
-| GET | `/api/netease/qr/check` | `key` | 轮询扫码状态（801/802/803/800） |
-| GET | `/api/netease/login/status` | — | 检查当前登录状态 |
-| POST | `/api/netease/logout` | — | 清除登录 Cookie |
+| POST | `/api/login/qr/start` | `platform` (netease\|qq) | 启动 Playwright 子进程，开始扫码登录 |
+| GET | `/api/login/qr/poll` | `platform` (netease\|qq) | 轮询状态，返回 QR 图片 + 状态 |
+| GET | `/api/login/status` | `platform` (netease\|qq) | 检查当前登录状态 |
+| POST | `/api/login/logout` | `platform` (netease\|qq) | 清除登录 Cookie |
 
 ### 下载接口
 

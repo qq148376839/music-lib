@@ -1,18 +1,11 @@
-package netease
+package qq
 
 import (
 	"encoding/json"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/guohuiyuan/music-lib/utils"
-)
-
-const (
-	AccountAPI = "https://music.163.com/weapi/w/nuser/account/get"
 )
 
 var (
@@ -27,25 +20,25 @@ func SetConfigDir(dir string) {
 	configDir = dir
 }
 
-// SetCookie updates the global cookie and replaces the default Netease instance.
+// SetCookie updates the global cookie and replaces the default QQ instance.
 func SetCookie(cookie string) {
 	loginMu.Lock()
 	defer loginMu.Unlock()
-	defaultNetease = New(cookie)
+	defaultQQ = New(cookie)
 }
 
 // GetCookie returns the current cookie string.
 func GetCookie() string {
 	loginMu.RLock()
 	defer loginMu.RUnlock()
-	return defaultNetease.cookie
+	return defaultQQ.cookie
 }
 
-// getDefault returns the current default Netease instance (thread-safe).
-func getDefault() *Netease {
+// getDefault returns the current default QQ instance (thread-safe).
+func getDefault() *QQ {
 	loginMu.RLock()
 	defer loginMu.RUnlock()
-	return defaultNetease
+	return defaultQQ
 }
 
 // --- Cookie persistence ---
@@ -59,7 +52,7 @@ func cookiePath() string {
 	loginMu.RLock()
 	dir := configDir
 	loginMu.RUnlock()
-	return filepath.Join(dir, "netease_cookie.json")
+	return filepath.Join(dir, "qq_cookie.json")
 }
 
 // LoadCookieFromDisk reads the persisted cookie file and sets the global cookie.
@@ -90,43 +83,23 @@ func removeCookieFromDisk() {
 
 // --- Login status ---
 
-// GetLoginStatus checks whether the current cookie is valid.
-// Returns loggedIn status and nickname.
+// GetLoginStatus checks whether the current cookie contains the required QQ music keys.
+// Returns loggedIn status and a placeholder nickname.
 func GetLoginStatus() (bool, string) {
 	cookie := GetCookie()
 	if cookie == "" {
 		return false, ""
 	}
-
-	reqData := map[string]interface{}{}
-	reqJSON, _ := json.Marshal(reqData)
-	params, encSecKey := EncryptWeApi(string(reqJSON))
-	form := url.Values{}
-	form.Set("params", params)
-	form.Set("encSecKey", encSecKey)
-
-	headers := []utils.RequestOption{
-		utils.WithHeader("Referer", Referer),
-		utils.WithHeader("Content-Type", "application/x-www-form-urlencoded"),
-		utils.WithHeader("Cookie", cookie),
-	}
-
-	body, err := utils.Post(AccountAPI, strings.NewReader(form.Encode()), headers...)
-	if err != nil {
-		return false, ""
-	}
-
-	var resp struct {
-		Code    int `json:"code"`
-		Profile struct {
-			Nickname string `json:"nickname"`
-		} `json:"profile"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return false, ""
-	}
-	if resp.Code == 200 && resp.Profile.Nickname != "" {
-		return true, resp.Profile.Nickname
+	// QQ music requires qqmusic_key or qm_keyst to be considered logged in.
+	if strings.Contains(cookie, "qqmusic_key") || strings.Contains(cookie, "qm_keyst") {
+		// Try to extract uin as nickname hint.
+		for _, part := range strings.Split(cookie, ";") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "uin=") {
+				return true, strings.TrimPrefix(part, "uin=")
+			}
+		}
+		return true, "QQ用户"
 	}
 	return false, ""
 }

@@ -25,6 +25,12 @@
 
   const TOAST_DURATION = 2500;
   const NAS_POLL_INTERVAL = 3000;
+  const QR_POLL_INTERVAL = 2000;
+
+  const PLATFORM_NAMES = {
+    netease: '网易云音乐',
+    qq: 'QQ音乐',
+  };
 
   // ---------------------------------------------------------------------------
   // DOM references (cached once on load)
@@ -41,8 +47,13 @@
   let currentPlaylistName = '';
   let currentPlaylistSource = '';
   let qrPollingTimer = null;
-  let neteaseLoggedIn = false;
-  let neteaseNickname = '';
+  let currentQRPlatform = null;
+
+  // Login state per platform
+  let loginState = {
+    netease: { loggedIn: false, nickname: '' },
+    qq:      { loggedIn: false, nickname: '' },
+  };
 
   // ---------------------------------------------------------------------------
   // Utility functions
@@ -114,18 +125,6 @@
   // API helpers
   // ---------------------------------------------------------------------------
 
-  /**
-   * Generic fetch wrapper.
-   * - Automatically shows / hides the loading spinner.
-   * - Parses JSON and checks the `code` field.
-   * - Returns the `data` payload on success.
-   * - Throws with a user-friendly message on failure.
-   *
-   * @param {string}        url
-   * @param {RequestInit=}  options
-   * @param {boolean=}      silent  If true, don't toggle loading indicator (used for parallel calls).
-   * @returns {Promise<any>}
-   */
   async function apiFetch(url, options = {}, silent = false) {
     if (!silent) showLoading();
     try {
@@ -136,7 +135,6 @@
       }
       return json.data;
     } catch (err) {
-      // Network errors or JSON parse failures
       if (err instanceof SyntaxError) {
         throw new Error('服务器返回了无效的数据');
       }
@@ -146,13 +144,6 @@
     }
   }
 
-  /**
-   * When the selected source is "all", fan-out requests to every provider
-   * in parallel and merge the results into a single array.
-   *
-   * @param {(sourceId: string) => Promise<any[]>} fetcher  Receives a single source id, returns an array.
-   * @returns {Promise<any[]>}  Merged results from all providers that succeeded.
-   */
   async function fetchAllProviders(fetcher) {
     showLoading();
     try {
@@ -176,7 +167,6 @@
   // Rendering helpers
   // ---------------------------------------------------------------------------
 
-  /** Create an element with optional className and text */
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -184,22 +174,9 @@
     return node;
   }
 
-  /**
-   * Build a song card DOM element.
-   *
-   * Layout:
-   *   div.song-card
-   *     div.song-info
-   *       div.song-name   — song name
-   *       div.song-meta   — artist / album / source / duration / size
-   *     div.song-actions
-   *       button.btn-download  下载链接
-   *       button.btn-lyrics    歌词
-   */
   function renderSongCard(song) {
     const card = el('div', 'song-card');
 
-    // -- info section --
     const info = el('div', 'song-info');
     info.appendChild(el('div', 'song-name', song.name || '未知歌曲'));
 
@@ -214,7 +191,6 @@
     const meta = el('div', 'song-meta');
 
     metaParts.forEach((part, idx) => {
-      // The source name gets a special tag span
       if (part === getSourceName(song.source)) {
         const tag = el('span', 'source-tag', part);
         meta.appendChild(tag);
@@ -222,17 +198,15 @@
         meta.appendChild(document.createTextNode(part));
       }
       if (idx < metaParts.length - 1) {
-        meta.appendChild(document.createTextNode(' \u00b7 '));  // middle dot separator
+        meta.appendChild(document.createTextNode(' \u00b7 '));
       }
     });
 
     info.appendChild(meta);
     card.appendChild(info);
 
-    // -- actions section --
     const actions = el('div', 'song-actions');
 
-    // Download dropdown
     const dlWrap = el('div', 'download-dropdown');
     const btnDl = el('button', 'btn-download');
     btnDl.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>下载';
@@ -279,26 +253,14 @@
     return card;
   }
 
-  /** Close all open download menus */
   function closeAllMenus() {
     $$('.download-menu.show').forEach((m) => m.classList.remove('show'));
   }
 
-  /**
-   * Build a playlist card DOM element.
-   *
-   * Layout:
-   *   div.playlist-card
-   *     div.playlist-cover > img   (or fallback icon)
-   *     div.playlist-info
-   *       div.playlist-name
-   *       div.playlist-meta   — creator / track count
-   */
   function renderPlaylistCard(playlist) {
     const card = el('div', 'playlist-card');
     card.addEventListener('click', () => handlePlaylistDetail(playlist));
 
-    // -- cover --
     const coverWrap = el('div', 'playlist-cover');
     if (playlist.cover) {
       const img = document.createElement('img');
@@ -314,7 +276,6 @@
     }
     card.appendChild(coverWrap);
 
-    // -- info --
     const info = el('div', 'playlist-info');
     info.appendChild(el('div', 'playlist-name', playlist.name || '未知歌单'));
 
@@ -328,7 +289,6 @@
     return card;
   }
 
-  /** SVG music note icon used as cover fallback */
   function createMusicNoteIcon() {
     const wrapper = el('div', 'music-note-icon');
     wrapper.innerHTML =
@@ -338,7 +298,6 @@
     return wrapper;
   }
 
-  /** Empty the container and append an array of child elements */
   function renderInto(container, children) {
     container.innerHTML = '';
     if (!children || children.length === 0) {
@@ -360,23 +319,19 @@
 
     tabBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
-        // Activate the clicked button
         tabBtns.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
 
-        // Show the matching panel
         const targetId = `tab-${btn.dataset.tab}`;
         tabPanels.forEach((panel) => {
           panel.classList.toggle('active', panel.id === targetId);
         });
 
-        // Start/stop NAS task polling
         if (btn.dataset.tab === 'nas-tasks') {
-          stopBadgePolling(); // full polling covers badge updates
+          stopBadgePolling();
           startTaskPolling();
         } else {
           stopTaskPolling();
-          // Resume lightweight badge polling if there might be active tasks
           if (nasEnabled) startBadgePolling();
         }
       });
@@ -447,7 +402,7 @@
           const errData = await resp.json();
           if (errData.message) errMsg = errData.message;
         } catch {
-          // JSON parse failed, keep default message.
+          // keep default message
         }
         throw new Error(errMsg);
       }
@@ -552,7 +507,6 @@
       } catch {
         fail++;
       }
-      // Small delay between downloads to avoid overwhelming the browser.
       if (i < songs.length - 1) {
         await new Promise((r) => setTimeout(r, 1500));
       }
@@ -629,7 +583,6 @@
       const cards = (playlists || []).map(renderPlaylistCard);
       renderInto(dom.playlistList, cards);
 
-      // Ensure list view is visible
       dom.playlistList.style.display = '';
       dom.playlistDetail.style.display = 'none';
     } catch (err) {
@@ -682,7 +635,6 @@
         `/api/playlist/songs?source=${encodeURIComponent(source)}&id=${encodeURIComponent(playlist.id)}`
       );
 
-      // Store for batch download.
       currentPlaylistSongs = songs || [];
       currentPlaylistName = playlist.name || '';
       currentPlaylistSource = source;
@@ -690,13 +642,9 @@
       const cards = (songs || []).map(renderSongCard);
       renderInto(dom.playlistSongs, cards);
 
-      // Update detail title
       dom.playlistDetailTitle.textContent = playlist.name || '歌单详情';
-
-      // Always show batch download actions (browser is always available).
       dom.batchActions.style.display = '';
 
-      // Switch to detail view
       dom.playlistList.style.display = 'none';
       dom.playlistDetail.style.display = 'block';
     } catch (err) {
@@ -740,7 +688,6 @@
           dom.parseResult.appendChild(el('div', 'empty-state', '未解析到歌曲'));
         }
       } else {
-        // playlist parse
         const data = await apiFetch(
           `/api/playlist/parse?source=${encodeURIComponent(source)}&link=${encodeURIComponent(link)}`
         );
@@ -748,7 +695,6 @@
         dom.parseResult.innerHTML = '';
 
         if (data && data.playlist) {
-          // Render playlist info header
           const header = el('div', 'parse-playlist-header');
           header.appendChild(renderPlaylistCard(data.playlist));
           dom.parseResult.appendChild(header);
@@ -793,9 +739,7 @@
     }
   }
 
-  /** Synchronize all NAS-related UI elements based on nasEnabled state. */
   function syncNASUI() {
-    // Batch download menu NAS items (marked with .nas-only)
     $$('.nas-only').forEach((el) => {
       el.style.display = nasEnabled ? '' : 'none';
     });
@@ -814,7 +758,6 @@
     }
   }
 
-  /** Update the NAS tab badge with the count of active (pending + running) tasks. */
   function updateNASBadge(tasks) {
     if (!dom.nasTaskBadge) return;
     const active = (tasks || []).filter(
@@ -831,7 +774,7 @@
   }
 
   function startBadgePolling() {
-    if (nasBadgePollingTimer) return; // already running
+    if (nasBadgePollingTimer) return;
     refreshBadge();
     nasBadgePollingTimer = setInterval(refreshBadge, NAS_POLL_INTERVAL);
   }
@@ -876,7 +819,6 @@
       return;
     }
 
-    // Show newest first.
     const reversed = [...tasks].reverse();
     const frag = document.createDocumentFragment();
     for (const task of reversed) {
@@ -919,7 +861,6 @@
     }
     card.appendChild(meta);
 
-    // Progress bar for running tasks.
     if (task.status === 'running') {
       const track = el('div', 'progress-bar-track');
       const fill = el('div', 'progress-bar-fill');
@@ -937,13 +878,11 @@
       card.appendChild(progressText);
     }
 
-    // Error message for failed tasks.
     if (task.status === 'failed' && task.error) {
       const errEl = el('div', 'task-error', task.error);
       card.appendChild(errEl);
     }
 
-    // File path for completed tasks.
     if (task.status === 'completed' && task.file_path) {
       const pathEl = el('div', 'progress-text', task.file_path);
       card.appendChild(pathEl);
@@ -960,7 +899,6 @@
     if (batches.length === 0) return;
 
     const frag = document.createDocumentFragment();
-    // Show newest first.
     const reversed = [...batches].reverse();
     for (const batch of reversed) {
       const card = el('div', 'batch-card');
@@ -975,7 +913,6 @@
       header.appendChild(el('span', 'batch-stats', statsText));
       card.appendChild(header);
 
-      // Progress bar.
       const track = el('div', 'progress-bar-track');
       const fill = el('div', 'progress-bar-fill');
       const pct = batch.total > 0 ? Math.round((batch.completed + batch.failed) / batch.total * 100) : 0;
@@ -994,131 +931,149 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Netease QR Login
+  // Dual-Platform QR Login
   // ---------------------------------------------------------------------------
 
   async function checkLoginStatus() {
-    try {
-      const data = await apiFetch('/api/netease/login/status', {}, true);
-      neteaseLoggedIn = data && data.logged_in;
-      neteaseNickname = (data && data.nickname) || '';
-      updateLoginButton();
-    } catch {
-      neteaseLoggedIn = false;
-      neteaseNickname = '';
-      updateLoginButton();
+    const platforms = ['netease', 'qq'];
+    for (const platform of platforms) {
+      try {
+        const data = await apiFetch(`/api/login/status?platform=${platform}`, {}, true);
+        loginState[platform].loggedIn = data && data.logged_in;
+        loginState[platform].nickname = (data && data.nickname) || '';
+      } catch {
+        loginState[platform].loggedIn = false;
+        loginState[platform].nickname = '';
+      }
     }
+    updateLoginButtons();
   }
 
-  function updateLoginButton() {
-    if (!dom.loginBtn || !dom.loginText) return;
-    if (neteaseLoggedIn) {
-      dom.loginText.textContent = neteaseNickname || '已登录';
-      dom.loginBtn.classList.add('logged-in');
-      dom.loginBtn.title = '点击管理网易云登录';
-    } else {
-      dom.loginText.textContent = '网易云登录';
-      dom.loginBtn.classList.remove('logged-in');
-      dom.loginBtn.title = '网易云登录';
-    }
+  function updateLoginButtons() {
+    const buttons = $$('.btn-login[data-platform]');
+    buttons.forEach((btn) => {
+      const platform = btn.dataset.platform;
+      const textEl = btn.querySelector('.login-text');
+      if (!textEl) return;
+
+      const state = loginState[platform];
+      if (state && state.loggedIn) {
+        textEl.textContent = state.nickname || '已登录';
+        btn.classList.add('logged-in');
+        btn.title = `点击管理${PLATFORM_NAMES[platform] || platform}登录`;
+      } else {
+        textEl.textContent = PLATFORM_NAMES[platform] ? PLATFORM_NAMES[platform].replace('音乐', '') + '登录' : platform;
+        btn.classList.remove('logged-in');
+        btn.title = `${PLATFORM_NAMES[platform] || platform}登录`;
+      }
+    });
   }
 
-  function openQRModal() {
+  function openQRModal(platform) {
+    currentQRPlatform = platform;
+    dom.qrModalTitle.textContent = `${PLATFORM_NAMES[platform] || platform} 扫码登录`;
     dom.qrModal.classList.add('show');
-    if (neteaseLoggedIn) {
-      showLoggedInState();
+
+    if (loginState[platform] && loginState[platform].loggedIn) {
+      showLoggedInState(platform);
     } else {
-      showQRCodeState();
+      startQRLogin(platform);
     }
   }
 
   function closeQRModal() {
     dom.qrModal.classList.remove('show');
     stopQRPolling();
+    currentQRPlatform = null;
   }
 
-  function showLoggedInState() {
+  function showLoggedInState(platform) {
     dom.qrImage.innerHTML = '';
     dom.qrImage.style.display = 'none';
     dom.qrStatus.style.display = 'none';
     dom.qrLoggedIn.style.display = '';
-    dom.qrNickname.textContent = neteaseNickname;
+    dom.qrNickname.textContent = loginState[platform].nickname;
   }
 
-  async function showQRCodeState() {
+  async function startQRLogin(platform) {
     dom.qrLoggedIn.style.display = 'none';
     dom.qrImage.style.display = '';
-    dom.qrImage.innerHTML = '';
+    dom.qrImage.innerHTML = '<div class="spinner"></div>';
     dom.qrStatus.style.display = '';
-    dom.qrStatus.textContent = '正在生成二维码...';
+    dom.qrStatus.textContent = '正在启动...';
     dom.qrStatus.className = 'qr-status';
 
     try {
-      const data = await apiFetch('/api/netease/qr/key', {}, true);
-      if (!data || !data.unikey) {
-        dom.qrStatus.textContent = '生成二维码失败';
-        dom.qrStatus.className = 'qr-status expired';
-        return;
-      }
-
-      // Generate QR code using qrcode-generator
-      dom.qrImage.innerHTML = '';
-      var qr = qrcode(0, 'M');
-      qr.addData(data.qr_url);
-      qr.make();
-      dom.qrImage.innerHTML = qr.createSvgTag(5, 0);
-
-      dom.qrStatus.textContent = '请使用网易云音乐App扫码';
-      dom.qrStatus.className = 'qr-status';
-
-      // Start polling
-      startQRPolling(data.unikey);
+      await apiFetch(`/api/login/qr/start?platform=${platform}`, { method: 'POST' }, true);
+      startQRPolling(platform);
     } catch (err) {
-      dom.qrStatus.textContent = err.message || '生成二维码失败';
+      dom.qrStatus.textContent = err.message || '启动登录失败';
       dom.qrStatus.className = 'qr-status expired';
     }
   }
 
-  function startQRPolling(unikey) {
+  function startQRPolling(platform) {
     stopQRPolling();
     qrPollingTimer = setInterval(async () => {
       try {
         const data = await apiFetch(
-          `/api/netease/qr/check?key=${encodeURIComponent(unikey)}`,
+          `/api/login/qr/poll?platform=${encodeURIComponent(platform)}`,
           {},
           true
         );
         if (!data) return;
 
-        switch (data.code) {
-          case 801:
-            dom.qrStatus.textContent = '等待扫码...';
+        switch (data.state) {
+          case 'starting':
+            dom.qrStatus.textContent = '正在启动...';
             dom.qrStatus.className = 'qr-status';
             break;
-          case 802:
+
+          case 'waiting_scan':
+            if (data.qr_image) {
+              dom.qrImage.innerHTML = '';
+              const img = document.createElement('img');
+              img.src = 'data:image/png;base64,' + data.qr_image;
+              img.alt = 'QR Code';
+              img.style.maxWidth = '200px';
+              img.style.maxHeight = '200px';
+              dom.qrImage.appendChild(img);
+            }
+            dom.qrStatus.textContent = `请使用${PLATFORM_NAMES[platform] || platform}App扫码`;
+            dom.qrStatus.className = 'qr-status';
+            break;
+
+          case 'scanned':
             dom.qrStatus.textContent = '已扫码，请在手机上确认';
             dom.qrStatus.className = 'qr-status scanned';
             break;
-          case 803:
+
+          case 'success':
             dom.qrStatus.textContent = '登录成功！';
             dom.qrStatus.className = 'qr-status success';
             stopQRPolling();
-            neteaseLoggedIn = true;
-            neteaseNickname = data.nickname || '';
-            updateLoginButton();
+            loginState[platform].loggedIn = true;
+            loginState[platform].nickname = data.nickname || '';
+            updateLoginButtons();
             setTimeout(() => closeQRModal(), 1200);
             break;
-          case 800:
-            dom.qrStatus.textContent = '二维码已过期，正在重新生成...';
+
+          case 'expired':
+            dom.qrStatus.textContent = '二维码已过期，正在刷新...';
+            dom.qrStatus.className = 'qr-status expired';
+            // Script auto-refreshes; next poll with qr_ready will update the image
+            break;
+
+          case 'error':
+            dom.qrStatus.textContent = data.error || '登录出错';
             dom.qrStatus.className = 'qr-status expired';
             stopQRPolling();
-            setTimeout(() => showQRCodeState(), 1500);
             break;
         }
       } catch {
         // Silent fail for polling
       }
-    }, 2000);
+    }, QR_POLL_INTERVAL);
   }
 
   function stopQRPolling() {
@@ -1128,14 +1083,17 @@
     }
   }
 
-  async function handleLogout() {
+  async function handleLogout(platform) {
+    if (!platform) platform = currentQRPlatform;
+    if (!platform) return;
+
     try {
-      await apiFetch('/api/netease/logout', { method: 'POST' });
-      neteaseLoggedIn = false;
-      neteaseNickname = '';
-      updateLoginButton();
+      await apiFetch(`/api/login/logout?platform=${platform}`, { method: 'POST' });
+      loginState[platform].loggedIn = false;
+      loginState[platform].nickname = '';
+      updateLoginButtons();
       closeQRModal();
-      showToast('已退出网易云登录');
+      showToast(`已退出${PLATFORM_NAMES[platform] || platform}登录`);
     } catch (err) {
       showToast(err.message || '退出登录失败');
     }
@@ -1173,12 +1131,10 @@
   // ---------------------------------------------------------------------------
 
   function initModal() {
-    // Close button(s) inside the modal
     $$('.modal-close', dom.lyricsModal).forEach((btn) => {
       btn.addEventListener('click', closeLyricsModal);
     });
 
-    // Click on the overlay background (the modal element itself, not its children)
     dom.lyricsModal.addEventListener('click', (e) => {
       if (e.target === dom.lyricsModal) {
         closeLyricsModal();
@@ -1191,7 +1147,6 @@
   // ---------------------------------------------------------------------------
 
   function init() {
-    // Cache all DOM references
     dom = {
       providerSelect:     $('#provider-select'),
       tabSearch:          $('#tab-search'),
@@ -1225,9 +1180,8 @@
       nasBatches:         $('#nas-batches'),
       nasTaskList:        $('#nas-task-list'),
       nasTaskBadge:       $('#nas-task-badge'),
-      loginBtn:           $('#login-btn'),
-      loginText:          $('#login-text'),
       qrModal:            $('#qr-modal'),
+      qrModalTitle:       $('#qr-modal-title'),
       qrModalClose:       $('#qr-modal-close'),
       qrImage:            $('#qr-image'),
       qrStatus:           $('#qr-status'),
@@ -1287,10 +1241,14 @@
     // --- NAS status ---
     checkNASStatus();
 
-    // --- Netease Login ---
-    if (dom.loginBtn) {
-      dom.loginBtn.addEventListener('click', openQRModal);
-    }
+    // --- Dual-platform Login ---
+    $$('.btn-login[data-platform]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const platform = btn.dataset.platform;
+        openQRModal(platform);
+      });
+    });
+
     if (dom.qrModalClose) {
       dom.qrModalClose.addEventListener('click', closeQRModal);
     }
@@ -1300,8 +1258,9 @@
       });
     }
     if (dom.logoutBtn) {
-      dom.logoutBtn.addEventListener('click', handleLogout);
+      dom.logoutBtn.addEventListener('click', () => handleLogout(currentQRPlatform));
     }
+
     checkLoginStatus();
   }
 
