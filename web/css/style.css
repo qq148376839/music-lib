@@ -1049,6 +1049,31 @@ a:hover {
 }
 
 /* ----------------------------------------------------------
+   NAS Task Badge
+   ---------------------------------------------------------- */
+
+.nas-task-badge {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: -2px;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background-color: #f78166;
+  border-radius: 9px;
+  padding: 0 5px;
+}
+
+.nas-task-badge.show {
+  display: inline-block;
+}
+
+/* ----------------------------------------------------------
    Responsive — Mobile (max-width: 480px)
    ---------------------------------------------------------- */
 

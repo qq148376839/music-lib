@@ -44,6 +44,26 @@ docker run -d -p 35280:35280 --name music-lib music-lib
 docker run -d -p 3000:3000 -e PORT=3000 --name music-lib music-lib
 ```
 
+### 启用 NAS 下载
+
+设置 `MUSIC_DIR` 环境变量后，Web UI 中会出现"下载到 NAS"选项：
+
+```bash
+docker run -d -p 35280:35280 \
+  -e MUSIC_DIR=/music \
+  -v /your/nas/music:/music \
+  --name music-lib music-lib
+```
+
+可选环境变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PORT` | `35280` | 服务端口 |
+| `MUSIC_DIR` | 未设置（NAS 禁用） | 音乐文件存储目录 |
+| `DOWNLOAD_CONCURRENCY` | `3` | NAS 并发下载数 |
+| `WEB_DIR` | `web` | 前端静态文件目录 |
+
 ### 验证服务
 
 ```bash
@@ -82,7 +102,6 @@ curl http://localhost:35280/health
 | 方法 | 路径 | 参数 | 说明 |
 |------|------|------|------|
 | GET | `/api/search` | `source`, `keyword` | 搜索歌曲 |
-| POST | `/api/download` | `source` + Body(Song JSON) | 获取下载链接 |
 | POST | `/api/lyrics` | `source` + Body(Song JSON) | 获取歌词 |
 | GET | `/api/parse` | `source`, `link` | 解析歌曲链接 |
 
@@ -95,6 +114,18 @@ curl http://localhost:35280/health
 | GET | `/api/playlist/parse` | `source`, `link` | 解析歌单链接 |
 | GET | `/api/playlist/recommended` | `source` | 获取推荐歌单 |
 
+### 下载接口
+
+| 方法 | 路径 | 参数 | 说明 |
+|------|------|------|------|
+| POST | `/api/download/file` | `source` + Body(Song JSON) | 代理下载歌曲文件（浏览器下载） |
+| GET | `/api/nas/status` | — | 查询 NAS 下载功能是否启用 |
+| POST | `/api/nas/download` | `source` + Body(Song JSON) | 单曲下载到 NAS |
+| POST | `/api/nas/download/batch` | `source` + Body(playlist JSON) | 批量下载歌单到 NAS |
+| GET | `/api/nas/tasks` | — | 列出所有 NAS 下载任务 |
+| GET | `/api/nas/task` | `id` | 查询单个任务状态 |
+| GET | `/api/nas/batches` | — | 列出批量下载批次汇总 |
+
 ### 调用示例
 
 **搜索歌曲：**
@@ -103,12 +134,13 @@ curl http://localhost:35280/health
 curl "http://localhost:35280/api/search?source=netease&keyword=周杰伦"
 ```
 
-**获取下载链接：**
+**浏览器下载歌曲文件：**
 
 ```bash
-curl -X POST "http://localhost:35280/api/download?source=kugou" \
+curl -X POST "http://localhost:35280/api/download/file?source=kugou" \
   -H "Content-Type: application/json" \
-  -d '{"id":"hash_value","source":"kugou","extra":{"hash":"hash_value"}}'
+  -d '{"id":"hash_value","source":"kugou","extra":{"hash":"hash_value"}}' \
+  -o song.mp3
 ```
 
 **解析歌曲链接：**

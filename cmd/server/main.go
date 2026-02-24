@@ -157,7 +157,6 @@ func main() {
 
 	// Song APIs
 	mux.HandleFunc("/api/search", handleSearch)
-	mux.HandleFunc("/api/download", handleDownload)
 	mux.HandleFunc("/api/lyrics", handleLyrics)
 	mux.HandleFunc("/api/parse", handleParse)
 
@@ -312,30 +311,6 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeOK(w, songs)
-}
-
-// POST /api/download?source=netease  body: Song JSON
-func handleDownload(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
-	}
-	if p.GetDownloadURL == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("download not supported for %s", source))
-		return
-	}
-	var song model.Song
-	if err := json.NewDecoder(r.Body).Decode(&song); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	url, err := p.GetDownloadURL(&song)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, map[string]string{"url": url})
 }
 
 // POST /api/lyrics?source=netease  body: Song JSON

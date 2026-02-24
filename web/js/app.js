@@ -36,6 +36,7 @@
   let dom; // populated in init()
   let nasEnabled = false;
   let nasTaskPollingTimer = null;
+  let nasBadgePollingTimer = null;
   let currentPlaylistSongs = [];
   let currentPlaylistName = '';
   let currentPlaylistSource = '';
@@ -87,6 +88,23 @@
   /** Get the currently selected source from the dropdown */
   function getSelectedSource() {
     return dom.providerSelect.value;
+  }
+
+  /**
+   * Resolve the effective source for a song using a three-level fallback:
+   *   song.source → currentPlaylistSource → getSelectedSource()
+   * Returns '' if none of the levels yield a usable (non-"all") value.
+   */
+  function resolveSource(song) {
+    const candidates = [
+      song && song.source,
+      currentPlaylistSource,
+      getSelectedSource(),
+    ];
+    for (const s of candidates) {
+      if (s && s !== 'all') return s;
+    }
+    return '';
   }
 
   // ---------------------------------------------------------------------------
@@ -213,8 +231,10 @@
 
     // Download dropdown
     const dlWrap = el('div', 'download-dropdown');
-    const btnDl = el('button', 'btn-download', '下载');
+    const btnDl = el('button', 'btn-download');
+    btnDl.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>下载';
     btnDl.addEventListener('click', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       closeAllMenus();
       dlMenu.classList.toggle('show');
@@ -226,6 +246,7 @@
     const browserItem = el('button', 'download-menu-item');
     browserItem.innerHTML = '<span class="menu-icon">&#8615;</span>浏览器下载';
     browserItem.addEventListener('click', (e) => {
+      e.preventDefault();
       e.stopPropagation();
       dlMenu.classList.remove('show');
       handleBrowserDownload(song);
@@ -236,6 +257,7 @@
       const nasItem = el('button', 'download-menu-item');
       nasItem.innerHTML = '<span class="menu-icon">&#9776;</span>下载到NAS';
       nasItem.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
         dlMenu.classList.remove('show');
         handleNASDownload(song);
@@ -347,9 +369,12 @@
 
         // Start/stop NAS task polling
         if (btn.dataset.tab === 'nas-tasks') {
+          stopBadgePolling(); // full polling covers badge updates
           startTaskPolling();
         } else {
           stopTaskPolling();
+          // Resume lightweight badge polling if there might be active tasks
+          if (nasEnabled) startBadgePolling();
         }
       });
     });
@@ -396,8 +421,8 @@
   // ---------------------------------------------------------------------------
 
   async function handleBrowserDownload(song) {
-    const source = song.source || getSelectedSource();
-    if (!source || source === 'all') {
+    const source = resolveSource(song);
+    if (!source) {
       showToast('无法确定歌曲来源');
       return;
     }
@@ -414,13 +439,14 @@
       );
 
       if (!resp.ok) {
-        // Try to read error JSON.
+        let errMsg = `下载失败 (HTTP ${resp.status})`;
         try {
           const errData = await resp.json();
-          throw new Error(errData.message || '下载失败');
+          if (errData.message) errMsg = errData.message;
         } catch {
-          throw new Error(`下载失败 (HTTP ${resp.status})`);
+          // JSON parse failed, keep default message.
         }
+        throw new Error(errMsg);
       }
 
       const blob = await resp.blob();
@@ -451,14 +477,14 @@
   // ---------------------------------------------------------------------------
 
   async function handleNASDownload(song) {
-    const source = song.source || getSelectedSource();
-    if (!source || source === 'all') {
+    const source = resolveSource(song);
+    if (!source) {
       showToast('无法确定歌曲来源');
       return;
     }
 
     try {
-      const data = await apiFetch(
+      await apiFetch(
         `/api/nas/download?source=${encodeURIComponent(source)}`,
         {
           method: 'POST',
@@ -467,6 +493,7 @@
         }
       );
       showToast('已加入NAS下载队列');
+      startBadgePolling();
     } catch (err) {
       showToast(err.message || 'NAS下载失败');
     }
@@ -497,6 +524,7 @@
         }
       );
       showToast(`已加入NAS下载队列 (${data.task_count}首)`);
+      startBadgePolling();
     } catch (err) {
       showToast(err.message || '批量下载失败');
     }
@@ -534,8 +562,8 @@
   // ---------------------------------------------------------------------------
 
   async function handleLyrics(song) {
-    const source = song.source || getSelectedSource();
-    if (!source || source === 'all') {
+    const source = resolveSource(song);
+    if (!source) {
       showToast('无法确定歌曲来源');
       return;
     }
@@ -755,9 +783,19 @@
           dom.nasStatusBadge.className = 'nas-status-badge disabled';
         }
       }
+      syncNASUI();
     } catch {
       nasEnabled = false;
+      syncNASUI();
     }
+  }
+
+  /** Synchronize all NAS-related UI elements based on nasEnabled state. */
+  function syncNASUI() {
+    // Batch download menu NAS items (marked with .nas-only)
+    $$('.nas-only').forEach((el) => {
+      el.style.display = nasEnabled ? '' : 'none';
+    });
   }
 
   function startTaskPolling() {
@@ -773,6 +811,44 @@
     }
   }
 
+  /** Update the NAS tab badge with the count of active (pending + running) tasks. */
+  function updateNASBadge(tasks) {
+    if (!dom.nasTaskBadge) return;
+    const active = (tasks || []).filter(
+      (t) => t.status === 'pending' || t.status === 'running'
+    ).length;
+    if (active > 0) {
+      dom.nasTaskBadge.textContent = active > 99 ? '99+' : String(active);
+      dom.nasTaskBadge.classList.add('show');
+    } else {
+      dom.nasTaskBadge.classList.remove('show');
+      dom.nasTaskBadge.textContent = '';
+      stopBadgePolling();
+    }
+  }
+
+  function startBadgePolling() {
+    if (nasBadgePollingTimer) return; // already running
+    refreshBadge();
+    nasBadgePollingTimer = setInterval(refreshBadge, NAS_POLL_INTERVAL);
+  }
+
+  function stopBadgePolling() {
+    if (nasBadgePollingTimer) {
+      clearInterval(nasBadgePollingTimer);
+      nasBadgePollingTimer = null;
+    }
+  }
+
+  async function refreshBadge() {
+    try {
+      const tasks = await apiFetch('/api/nas/tasks', {}, true);
+      updateNASBadge(tasks || []);
+    } catch {
+      // Silent fail.
+    }
+  }
+
   async function refreshNASTasks() {
     try {
       const [tasks, batches] = await Promise.all([
@@ -781,6 +857,7 @@
       ]);
       renderBatchSummary(batches || []);
       renderNASTaskPanel(tasks || []);
+      updateNASBadge(tasks || []);
     } catch {
       // Silent fail for polling.
     }
@@ -988,6 +1065,7 @@
       nasStatusBadge:     $('#nas-status-badge'),
       nasBatches:         $('#nas-batches'),
       nasTaskList:        $('#nas-task-list'),
+      nasTaskBadge:       $('#nas-task-badge'),
     };
 
     // --- Tabs ---
@@ -1004,6 +1082,7 @@
     // --- Batch download dropdown ---
     if (dom.batchDownloadBtn) {
       dom.batchDownloadBtn.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
         closeAllMenus();
         dom.batchDownloadMenu.classList.toggle('show');
@@ -1012,6 +1091,7 @@
     if (dom.batchDownloadMenu) {
       $$('.download-menu-item', dom.batchDownloadMenu).forEach((item) => {
         item.addEventListener('click', (e) => {
+          e.preventDefault();
           e.stopPropagation();
           dom.batchDownloadMenu.classList.remove('show');
           const action = item.dataset.action;
@@ -1037,13 +1117,7 @@
     document.addEventListener('click', () => closeAllMenus());
 
     // --- NAS status ---
-    checkNASStatus().then(() => {
-      // Hide NAS menu items if NAS is disabled.
-      if (!nasEnabled && dom.batchDownloadMenu) {
-        const nasItem = $('[data-action="nas"]', dom.batchDownloadMenu);
-        if (nasItem) nasItem.style.display = 'none';
-      }
-    });
+    checkNASStatus();
   }
 
   // Boot

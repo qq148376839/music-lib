@@ -38,7 +38,7 @@
         <button class="tab-btn active" data-tab="search">搜索歌曲</button>
         <button class="tab-btn" data-tab="playlist">歌单</button>
         <button class="tab-btn" data-tab="parse">链接解析</button>
-        <button class="tab-btn" data-tab="nas-tasks">NAS下载</button>
+        <button class="tab-btn" data-tab="nas-tasks" style="position:relative">NAS下载<span id="nas-task-badge" class="nas-task-badge"></span></button>
     </nav>
 
     <!-- Main Content -->
@@ -72,10 +72,10 @@
                     <div class="detail-header-row">
                         <h3 id="playlist-detail-title" class="detail-title"></h3>
                         <div id="playlist-batch-actions" class="batch-download-dropdown" style="display:none">
-                            <button id="playlist-batch-download-btn" class="btn-download btn-small">批量下载</button>
+                            <button id="playlist-batch-download-btn" class="btn-download btn-small"><svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" style="vertical-align:-1px;margin-right:4px"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>批量下载</button>
                             <div id="batch-download-menu" class="download-menu">
                                 <button class="download-menu-item" data-action="browser"><span class="menu-icon">&#8615;</span>浏览器下载</button>
-                                <button class="download-menu-item" data-action="nas"><span class="menu-icon">&#9776;</span>下载到NAS</button>
+                                <button class="download-menu-item nas-only" data-action="nas" style="display:none"><span class="menu-icon">&#9776;</span>下载到NAS</button>
                             </div>
                         </div>
                     </div>
