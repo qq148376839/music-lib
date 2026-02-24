@@ -102,7 +102,8 @@ func (q *QQ) Search(keyword string) ([]model.Song, error) {
 
 	var songs []model.Song
 	for _, item := range resp.Data.Song.List {
-		if item.Pay.PayPlay == 1 {
+		// 未登录时过滤付费歌曲；登录后保留（用户可能有 VIP）
+		if item.Pay.PayPlay == 1 && q.cookie == "" {
 			continue
 		}
 
