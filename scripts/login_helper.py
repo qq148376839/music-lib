@@ -34,8 +34,22 @@ def emit_error(msg: str):
     emit({"type": "error", "message": msg})
 
 
+def screenshot_element(el) -> str:
+    """Screenshot an element and return base64 PNG."""
+    data = el.screenshot()
+    return base64.b64encode(data).decode("ascii")
+
+
 # ---------------------------------------------------------------------------
-# Netease
+# Netease  (music.163.com)
+#
+# Page structure (from live capture):
+#   - Login trigger: a[data-action="login"]  (header "登录" link)
+#   - QR container:  #login-qrcode  (.lg.n-login-scan)
+#   - QR canvas:     #login-qrcode .canvas.j-flag
+#   - Scanned state: #login-qrcode .confirm.j-flag  becomes visible
+#   - Expired:       page shows "二维码已过期" text; [data-action="refresh"] appears
+#   - Success:       MUSIC_U cookie is set
 # ---------------------------------------------------------------------------
 
 def run_netease():
@@ -52,11 +66,12 @@ def run_netease():
         )
         context = browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1280, "height": 800},
+            locale="zh-CN",
         )
         page = context.new_page()
 
@@ -70,37 +85,35 @@ def run_netease():
 
 
 def _netease_login_loop(page, context):
-    """Run the Netease QR login flow. Handles expiry by looping."""
+    """Navigate to Netease, open the QR login dialog, capture QR, poll."""
     while True:
         page.goto("https://music.163.com/", wait_until="domcontentloaded")
-        time.sleep(2)
+        page.wait_for_timeout(3000)
 
-        # Click the login trigger — try multiple selectors
-        login_selectors = [
-            "a.link.s-fc3",           # "登录" link in header
-            'a[href="javascript:void(0)"]',
-            "text=登录",
-        ]
-        clicked = False
-        for sel in login_selectors:
+        # --- Click the "登录" link in the header ---
+        login_clicked = False
+        for sel in [
+            'a[data-action="login"]',       # official data-action attribute
+            'a.link.s-fc3:has-text("登录")', # class + text combo
+            'text=登录',                      # fallback: any "登录" text
+        ]:
             try:
-                el = page.query_selector(sel)
-                if el and el.is_visible():
-                    el.click()
-                    clicked = True
+                loc = page.locator(sel).first
+                if loc.is_visible(timeout=2000):
+                    loc.click()
+                    login_clicked = True
+                    log.info("clicked login trigger: %s", sel)
                     break
             except Exception:
                 continue
 
-        if not clicked:
-            # Try navigating directly to login page
+        if not login_clicked:
+            log.warning("no login trigger found, trying direct hash navigation")
             page.goto("https://music.163.com/#/login", wait_until="domcontentloaded")
-            time.sleep(1)
 
-        # Wait for the QR code area to appear
-        time.sleep(3)
+        page.wait_for_timeout(3000)
 
-        # Try to find and screenshot the QR code
+        # --- Capture the QR code ---
         qr_image = _netease_capture_qr(page)
         if not qr_image:
             emit_error("无法获取网易云二维码")
@@ -108,88 +121,96 @@ def _netease_login_loop(page, context):
 
         emit({"type": "qr_ready", "image": qr_image})
 
-        # Poll for login success
+        # --- Poll for MUSIC_U cookie ---
         result = _netease_poll(page, context)
         if result == "success":
             return
-        elif result == "expired":
+        if result == "expired":
             emit({"type": "expired"})
-            log.info("QR expired, refreshing...")
-            time.sleep(2)
+            log.info("QR expired, will reload page and retry")
+            page.wait_for_timeout(2000)
             continue
-        else:
-            return
+        # error — already emitted inside _netease_poll
+        return
 
 
 def _netease_capture_qr(page) -> str:
-    """Try to capture the QR code image from the Netease login page."""
-    # Look for QR code image or canvas in various possible locations
-    qr_selectors = [
-        ".qr-code-area img",
-        ".qr-code img",
-        "img[src*='qrcode']",
-        "img[src*='login']",
-        "canvas",
-        ".j-img",
-        "#qrImg",
-        "img.qr",
-    ]
+    """Screenshot the QR code element on the Netease login page."""
 
-    for sel in qr_selectors:
+    # Priority 1: the QR canvas inside #login-qrcode
+    for sel in [
+        "#login-qrcode canvas",              # canvas rendered QR
+        "#login-qrcode .canvas.j-flag",       # specific class
+        "#login-qrcode img",                   # might be an <img> instead
+    ]:
         try:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                screenshot = el.screenshot()
-                return base64.b64encode(screenshot).decode("ascii")
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=2000):
+                return screenshot_element(loc)
         except Exception:
             continue
 
-    # Fallback: screenshot a centered region of the page
+    # Priority 2: the whole QR container
+    for sel in [
+        "#login-qrcode",
+        ".n-login-scan",
+    ]:
+        try:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=2000):
+                return screenshot_element(loc)
+        except Exception:
+            continue
+
+    # Priority 3: any visible canvas on the page (QR is often drawn on canvas)
     try:
-        # Try taking a screenshot of the login modal area
-        modal_selectors = [
-            ".m-layer",
-            ".u-layer",
-            ".login-box",
-            ".qr-login",
-            "[class*='login']",
-        ]
-        for sel in modal_selectors:
-            try:
-                el = page.query_selector(sel)
-                if el and el.is_visible():
-                    screenshot = el.screenshot()
-                    return base64.b64encode(screenshot).decode("ascii")
-            except Exception:
-                continue
+        canvases = page.locator("canvas")
+        for i in range(canvases.count()):
+            c = canvases.nth(i)
+            if c.is_visible():
+                return screenshot_element(c)
     except Exception:
         pass
 
+    # Priority 4: broader login modal area
+    for sel in [
+        ".n-log2",
+        ".m-layer",
+        ".u-layer",
+    ]:
+        try:
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=1000):
+                return screenshot_element(loc)
+        except Exception:
+            continue
+
+    log.warning("no QR element found on Netease page")
     return ""
 
 
 def _netease_poll(page, context) -> str:
-    """Poll cookies for MUSIC_U. Returns 'success', 'expired', or 'error'."""
-    max_wait = 300  # 5 minutes
+    """Poll for MUSIC_U cookie. Returns 'success', 'expired', or 'error'."""
+    max_wait = 300  # seconds
     start = time.time()
 
     while time.time() - start < max_wait:
-        time.sleep(2)
+        page.wait_for_timeout(2000)
 
+        # Check cookies
         cookies = context.cookies()
         cookie_dict = {c["name"]: c["value"] for c in cookies}
 
         if "MUSIC_U" in cookie_dict:
-            # Build cookie string from relevant cookies
-            relevant = ["MUSIC_U", "__csrf", "NMTID", "JSESSIONID-WYYY", "WNMCID"]
+            # Collect all .163.com / .music.163.com cookies
             parts = []
             for c in cookies:
-                if c["name"] in relevant or c["name"].startswith("_"):
+                d = c.get("domain", "")
+                if "163.com" in d:
                     parts.append(f"{c['name']}={c['value']}")
             cookie_str = "; ".join(parts)
 
-            # Try to get nickname
-            nickname = _netease_get_nickname(page)
+            nickname = _netease_get_nickname(page, cookie_str)
 
             emit({
                 "type": "login_success",
@@ -198,47 +219,62 @@ def _netease_poll(page, context) -> str:
             })
             return "success"
 
-        # Check if QR has expired by looking for expiry indicators
+        # Check "已扫码" (scanned) state
         try:
-            expired_els = page.query_selector_all(
-                "text=二维码已过期, text=已失效, text=expired"
-            )
-            if expired_els:
+            confirm = page.locator("#login-qrcode .confirm.j-flag").first
+            if confirm.is_visible(timeout=200):
+                emit({"type": "status", "code": 802})
+        except Exception:
+            pass
+
+        # Check if QR expired
+        try:
+            refresh = page.locator('[data-action="refresh"]').first
+            if refresh.is_visible(timeout=200):
                 return "expired"
+        except Exception:
+            pass
+
+        # Also check for expiry text
+        try:
+            for text in ["二维码已过期", "二维码已失效"]:
+                if page.locator(f"text={text}").count() > 0:
+                    return "expired"
         except Exception:
             pass
 
     return "expired"
 
 
-def _netease_get_nickname(page) -> str:
-    """Try to extract the logged-in username."""
+def _netease_get_nickname(page, cookie_str: str) -> str:
+    """Fetch nickname via the account API using the obtained cookie."""
     try:
-        # After login, the page might show the nickname
-        page.goto("https://music.163.com/", wait_until="domcontentloaded")
-        time.sleep(2)
-        # Look for nickname element
-        nick_selectors = [
-            ".head_name .f-thide",
-            ".nickname",
-            "span.name",
-        ]
-        for sel in nick_selectors:
-            try:
-                el = page.query_selector(sel)
-                if el:
-                    text = el.inner_text().strip()
-                    if text:
-                        return text
-            except Exception:
-                continue
-    except Exception:
-        pass
+        resp = page.request.fetch(
+            "https://music.163.com/api/nuser/account/get",
+            headers={
+                "Referer": "https://music.163.com/",
+                "Cookie": cookie_str,
+            },
+        )
+        data = resp.json()
+        profile = data.get("profile") or {}
+        return profile.get("nickname", "")
+    except Exception as e:
+        log.warning("failed to get netease nickname: %s", e)
     return ""
 
 
 # ---------------------------------------------------------------------------
-# QQ Music
+# QQ Music  (y.qq.com)
+#
+# Login flow (from live network capture):
+#   1. y.qq.com has a "登录" button that opens a popup
+#   2. The popup loads graph.qq.com/oauth2.0/authorize
+#   3. Which loads xui.ptlogin2.qq.com/cgi-bin/xlogin in an iframe
+#   4. The QR code image is fetched from xui.ptlogin2.qq.com/ssl/ptqrshow
+#   5. After scan, cookies are set on .qq.com domain
+#
+# Key cookie: qqmusic_key / qm_keyst
 # ---------------------------------------------------------------------------
 
 def run_qq():
@@ -255,11 +291,12 @@ def run_qq():
         )
         context = browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1280, "height": 800},
+            locale="zh-CN",
         )
         page = context.new_page()
 
@@ -273,30 +310,35 @@ def run_qq():
 
 
 def _qq_login_loop(page, context):
-    """Run the QQ Music QR login flow."""
+    """Navigate to QQ Music, trigger login, capture QR from ptlogin iframe."""
     while True:
         page.goto("https://y.qq.com/", wait_until="domcontentloaded")
-        time.sleep(2)
+        page.wait_for_timeout(3000)
 
-        # Click login button
-        login_selectors = [
-            "a.top_login__link",
-            "text=登录",
-            ".login_link",
-            "a[href*='login']",
-        ]
-        for sel in login_selectors:
+        # --- Click the login button ---
+        login_clicked = False
+        for sel in [
+            'a.top_login__link',
+            '.top_login__link',
+            'text=登录',
+            'a:has-text("登录")',
+        ]:
             try:
-                el = page.query_selector(sel)
-                if el and el.is_visible():
-                    el.click()
+                loc = page.locator(sel).first
+                if loc.is_visible(timeout=2000):
+                    loc.click()
+                    login_clicked = True
+                    log.info("clicked QQ login trigger: %s", sel)
                     break
             except Exception:
                 continue
 
-        time.sleep(3)
+        if not login_clicked:
+            log.warning("no QQ login trigger found on page")
 
-        # The QQ login page uses an iframe from ptlogin2.qq.com
+        page.wait_for_timeout(4000)
+
+        # --- Find the ptlogin2 iframe and capture QR ---
         qr_image = _qq_capture_qr(page)
         if not qr_image:
             emit_error("无法获取QQ音乐二维码")
@@ -304,80 +346,94 @@ def _qq_login_loop(page, context):
 
         emit({"type": "qr_ready", "image": qr_image})
 
+        # --- Poll for qqmusic_key cookie ---
         result = _qq_poll(page, context)
         if result == "success":
             return
-        elif result == "expired":
+        if result == "expired":
             emit({"type": "expired"})
-            log.info("QR expired, refreshing...")
-            time.sleep(2)
+            log.info("QQ QR expired, will reload and retry")
+            page.wait_for_timeout(2000)
             continue
-        else:
-            return
+        return
+
+
+def _qq_find_ptlogin_frame(page):
+    """Find the ptlogin2.qq.com iframe."""
+    for f in page.frames:
+        if "ptlogin2" in f.url or "xui.ptlogin2" in f.url:
+            return f
+    return None
 
 
 def _qq_capture_qr(page) -> str:
-    """Try to capture QR code from QQ login iframe."""
-    # Try to find the ptlogin iframe
-    frame = None
-    for f in page.frames:
-        if "ptlogin" in f.url or "xui.ptlogin2" in f.url:
-            frame = f
-            break
+    """Screenshot the QR code from the ptlogin iframe."""
+
+    frame = _qq_find_ptlogin_frame(page)
 
     if frame:
-        # Look for QR image inside the iframe
-        qr_selectors = ["#qrlogin_img", "img[src*='ptqrshow']", "img.qr"]
-        for sel in qr_selectors:
+        log.info("found ptlogin frame: %s", frame.url[:80])
+
+        # The QR image has src containing "ptqrshow"
+        for sel in [
+            "img#qrlogin_img",                # known id in ptlogin
+            "img[src*='ptqrshow']",            # URL-based selector
+            "#qr",                              # possible QR container
+            "#qrlogin_img",
+        ]:
             try:
-                el = frame.query_selector(sel)
-                if el and el.is_visible():
-                    screenshot = el.screenshot()
-                    return base64.b64encode(screenshot).decode("ascii")
+                loc = frame.locator(sel).first
+                if loc.is_visible(timeout=3000):
+                    return screenshot_element(loc)
             except Exception:
                 continue
 
-    # Fallback: try on the main page
-    qr_selectors = [
-        "img[src*='qr']",
-        "img[src*='ptqrshow']",
-        "#login_qr_img",
-        "canvas",
-    ]
-    for sel in qr_selectors:
+        # Screenshot the whole QR login area in the iframe
+        for sel in [
+            "#qrlogin",
+            ".qrlogin",
+            ".web_qr_login",
+        ]:
+            try:
+                loc = frame.locator(sel).first
+                if loc.is_visible(timeout=2000):
+                    return screenshot_element(loc)
+            except Exception:
+                continue
+
+    # No ptlogin frame found — maybe QQ uses a different flow now.
+    # Try to find any QR-like image on the page or in any frame.
+    for f in page.frames:
         try:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                screenshot = el.screenshot()
-                return base64.b64encode(screenshot).decode("ascii")
+            imgs = f.locator("img[src*='qr']")
+            for i in range(imgs.count()):
+                img = imgs.nth(i)
+                if img.is_visible():
+                    return screenshot_element(img)
         except Exception:
             continue
 
-    # Last resort: screenshot the login modal
-    modal_selectors = [
-        ".login_dialog",
-        ".mod_login",
-        "[class*='login']",
-    ]
-    for sel in modal_selectors:
-        try:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                screenshot = el.screenshot()
-                return base64.b64encode(screenshot).decode("ascii")
-        except Exception:
-            continue
+    # Fallback: look for WeChat QR (open.weixin.qq.com)
+    for f in page.frames:
+        if "open.weixin.qq.com" in f.url:
+            try:
+                img = f.locator("img.web_qr_img, img[src*='qrcode']").first
+                if img.is_visible(timeout=2000):
+                    return screenshot_element(img)
+            except Exception:
+                pass
 
+    log.warning("no QR element found for QQ login")
     return ""
 
 
 def _qq_poll(page, context) -> str:
-    """Poll cookies for QQ music keys. Returns 'success', 'expired', or 'error'."""
-    max_wait = 300  # 5 minutes
+    """Poll for qqmusic_key cookie. Returns 'success', 'expired', or 'error'."""
+    max_wait = 300
     start = time.time()
 
     while time.time() - start < max_wait:
-        time.sleep(2)
+        page.wait_for_timeout(2000)
 
         cookies = context.cookies()
         cookie_dict = {c["name"]: c["value"] for c in cookies}
@@ -385,19 +441,18 @@ def _qq_poll(page, context) -> str:
         has_key = ("qqmusic_key" in cookie_dict or "qm_keyst" in cookie_dict)
 
         if has_key:
-            # Filter relevant QQ cookies
-            relevant_domains = [".qq.com", ".y.qq.com", "y.qq.com", "qq.com"]
+            # Collect all .qq.com domain cookies
             parts = []
             for c in cookies:
-                domain = c.get("domain", "")
-                if any(domain.endswith(d) or domain == d for d in relevant_domains):
+                d = c.get("domain", "")
+                if "qq.com" in d:
                     parts.append(f"{c['name']}={c['value']}")
             cookie_str = "; ".join(parts)
 
-            # Try to get nickname from uin cookie
-            nickname = cookie_dict.get("uin", "QQ用户")
-            if nickname.startswith("o"):
-                nickname = nickname[1:]  # uin often has "o" prefix
+            # Nickname from uin
+            nickname = cookie_dict.get("uin", cookie_dict.get("login_type", "QQ用户"))
+            if isinstance(nickname, str) and nickname.startswith("o"):
+                nickname = nickname[1:]
 
             emit({
                 "type": "login_success",
@@ -406,15 +461,20 @@ def _qq_poll(page, context) -> str:
             })
             return "success"
 
-        # Check for QR expiry
-        try:
-            for f in page.frames:
-                if "ptlogin" in f.url:
-                    expired = f.query_selector_all("text=二维码已失效, text=已过期")
-                    if expired:
+        # Check for QR expiry inside ptlogin iframe
+        frame = _qq_find_ptlogin_frame(page)
+        if frame:
+            try:
+                # ptlogin shows "二维码已失效" or a refresh link when expired
+                for text in ["二维码已失效", "二维码已过期"]:
+                    if frame.locator(f"text={text}").count() > 0:
                         return "expired"
-        except Exception:
-            pass
+                # Also check for the refresh link that appears when expired
+                refresh = frame.locator("#qrlogin_img_out, .ptlogin_qrcode_expired")
+                if refresh.count() > 0 and refresh.first.is_visible():
+                    return "expired"
+            except Exception:
+                pass
 
     return "expired"
 
