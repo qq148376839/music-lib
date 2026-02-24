@@ -89,6 +89,24 @@ docker run -d -p 35280:35280 \
   --name music-lib music-lib
 ```
 
+### 全局音质设置
+
+Web UI Header 左侧提供音质下拉菜单，支持三档音质切换：
+
+| 选项 | 含义 | 说明 |
+|------|------|------|
+| 无损 | `lossless` | 默认，优先请求 FLAC/无损格式 |
+| 极高 | `high` | 优先 320kbps MP3 |
+| 标准 | `standard` | 128kbps MP3 |
+
+选择会持久化到浏览器 `localStorage`，所有下载请求自动携带 `quality` 参数。各平台按音质偏好从高到低降级尝试：
+
+- **QQ 音乐**：无损 → F000(FLAC) → M800(320k) → M500(128k) → C400(m4a)
+- **网易云音乐**：无损 → br=999000 → br=320000 → br=128000
+- **酷我音乐**：无损 → 2000kflac → flac → 320kmp3 → 128kmp3
+
+其他平台（酷狗、咪咕等）默认选取最高可用音质，暂不受此设置影响。
+
 ### 跨平台回退下载
 
 NAS 批量下载时，部分歌曲可能因 VIP/版权限制无法从原始平台获取下载链接。系统会自动在其他平台搜索同名歌曲并尝试下载，无需手动干预。
@@ -164,10 +182,10 @@ curl http://localhost:35280/health
 
 | 方法 | 路径 | 参数 | 说明 |
 |------|------|------|------|
-| POST | `/api/download/file` | `source` + Body(Song JSON) | 代理下载歌曲文件（浏览器下载） |
+| POST | `/api/download/file` | `source`, `quality`(可选) + Body(Song JSON) | 代理下载歌曲文件（浏览器下载） |
 | GET | `/api/nas/status` | — | 查询 NAS 下载功能是否启用 |
-| POST | `/api/nas/download` | `source` + Body(Song JSON) | 单曲下载到 NAS |
-| POST | `/api/nas/download/batch` | `source` + Body(playlist JSON) | 批量下载歌单到 NAS |
+| POST | `/api/nas/download` | `source`, `quality`(可选) + Body(Song JSON) | 单曲下载到 NAS |
+| POST | `/api/nas/download/batch` | `source`, `quality`(可选) + Body(playlist JSON) | 批量下载歌单到 NAS |
 | GET | `/api/nas/tasks` | — | 列出所有 NAS 下载任务 |
 | GET | `/api/nas/task` | `id` | 查询单个任务状态 |
 | GET | `/api/nas/batches` | — | 列出批量下载批次汇总 |

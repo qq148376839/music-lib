@@ -12,6 +12,14 @@
     <header class="app-header">
         <h1 class="app-title">Music Lib</h1>
         <p class="app-subtitle">多平台音乐聚合</p>
+        <div class="quality-setting">
+            <label for="quality-select" class="quality-label">音质</label>
+            <select id="quality-select">
+                <option value="lossless">无损</option>
+                <option value="high">极高</option>
+                <option value="standard">标准</option>
+            </select>
+        </div>
         <div class="login-status" id="login-status">
             <button class="btn-login" data-platform="netease" title="网易云登录">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" style="vertical-align:-2px;margin-right:4px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>

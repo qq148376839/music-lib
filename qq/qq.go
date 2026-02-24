@@ -511,7 +511,22 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		Prefix string
 		Ext    string
 	}
-	rates := []Rate{{"M500", "mp3"}, {"C400", "m4a"}}
+
+	quality := ""
+	if s.Extra != nil {
+		quality = s.Extra["quality"]
+	}
+
+	var rates []Rate
+	switch quality {
+	case "standard":
+		rates = []Rate{{"M500", "mp3"}, {"C400", "m4a"}}
+	case "high":
+		rates = []Rate{{"M800", "mp3"}, {"M500", "mp3"}, {"C400", "m4a"}}
+	default: // "lossless" or empty
+		rates = []Rate{{"F000", "flac"}, {"M800", "mp3"}, {"M500", "mp3"}, {"C400", "m4a"}}
+	}
+
 	var lastErr string
 
 	for _, rate := range rates {

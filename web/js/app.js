@@ -104,6 +104,11 @@
     return dom.providerSelect.value;
   }
 
+  /** Get the currently selected quality from the dropdown */
+  function getQuality() {
+    return dom.qualitySelect ? dom.qualitySelect.value : 'lossless';
+  }
+
   /**
    * Resolve the effective source for a song using a three-level fallback:
    *   song.source → currentPlaylistSource → getSelectedSource()
@@ -388,7 +393,7 @@
     showLoading();
     try {
       const resp = await fetch(
-        `/api/download/file?source=${encodeURIComponent(source)}`,
+        `/api/download/file?source=${encodeURIComponent(source)}&quality=${encodeURIComponent(getQuality())}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -443,7 +448,7 @@
 
     try {
       await apiFetch(
-        `/api/nas/download?source=${encodeURIComponent(source)}`,
+        `/api/nas/download?source=${encodeURIComponent(source)}&quality=${encodeURIComponent(getQuality())}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -471,7 +476,7 @@
 
     try {
       const data = await apiFetch(
-        `/api/nas/download/batch?source=${encodeURIComponent(source)}`,
+        `/api/nas/download/batch?source=${encodeURIComponent(source)}&quality=${encodeURIComponent(getQuality())}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1148,6 +1153,7 @@
 
   function init() {
     dom = {
+      qualitySelect:      $('#quality-select'),
       providerSelect:     $('#provider-select'),
       tabSearch:          $('#tab-search'),
       tabPlaylist:        $('#tab-playlist'),
@@ -1189,6 +1195,17 @@
       qrNickname:         $('#qr-nickname'),
       logoutBtn:          $('#logout-btn'),
     };
+
+    // --- Quality setting (localStorage persistence) ---
+    const savedQuality = localStorage.getItem('quality');
+    if (savedQuality && dom.qualitySelect) {
+      dom.qualitySelect.value = savedQuality;
+    }
+    if (dom.qualitySelect) {
+      dom.qualitySelect.addEventListener('change', () => {
+        localStorage.setItem('quality', dom.qualitySelect.value);
+      });
+    }
 
     // --- Tabs ---
     initTabs();

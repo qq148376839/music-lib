@@ -92,6 +92,13 @@ func (h *Handlers) HandleProxyDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if quality := r.URL.Query().Get("quality"); quality != "" {
+		if song.Extra == nil {
+			song.Extra = map[string]string{}
+		}
+		song.Extra["quality"] = quality
+	}
+
 	audioURL, err := pf.GetDownloadURL(&song)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "get download url: "+err.Error())
@@ -167,6 +174,13 @@ func (h *Handlers) HandleNASDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if quality := r.URL.Query().Get("quality"); quality != "" {
+		if song.Extra == nil {
+			song.Extra = map[string]string{}
+		}
+		song.Extra["quality"] = quality
+	}
+
 	taskID := h.mgr.Enqueue(song, source, pf.GetDownloadURL, pf.GetLyrics)
 	writeOK(w, map[string]string{"task_id": taskID})
 }
@@ -204,6 +218,15 @@ func (h *Handlers) HandleNASBatchDownload(w http.ResponseWriter, r *http.Request
 	if len(body.Songs) == 0 {
 		writeError(w, http.StatusBadRequest, "no songs provided")
 		return
+	}
+
+	if quality := r.URL.Query().Get("quality"); quality != "" {
+		for i := range body.Songs {
+			if body.Songs[i].Extra == nil {
+				body.Songs[i].Extra = map[string]string{}
+			}
+			body.Songs[i].Extra["quality"] = quality
+		}
 	}
 
 	batchID := h.mgr.EnqueueBatch(body.Songs, body.PlaylistName, source, pf.GetDownloadURL, pf.GetLyrics)

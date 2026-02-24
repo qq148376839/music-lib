@@ -416,7 +416,12 @@ func (k *Kuwo) GetDownloadURL(s *model.Song) (string, error) {
 		rid = s.Extra["rid"]
 	}
 
-	return k.fetchAudioURL(rid)
+	quality := ""
+	if s.Extra != nil {
+		quality = s.Extra["quality"]
+	}
+
+	return k.fetchAudioURLWithQuality(rid, quality)
 }
 
 // fetchFullSongInfo 内部聚合：同时获取元数据和下载链接
@@ -469,9 +474,22 @@ func (k *Kuwo) fetchFullSongInfo(rid string) (*model.Song, error) {
 	}, nil
 }
 
-// fetchAudioURL 内部核心：仅获取下载链接
+// fetchAudioURL 内部核心：仅获取下载链接（默认无损优先）
 func (k *Kuwo) fetchAudioURL(rid string) (string, error) {
-	qualities := []string{"128kmp3", "320kmp3", "flac", "2000kflac"}
+	return k.fetchAudioURLWithQuality(rid, "lossless")
+}
+
+// fetchAudioURLWithQuality 根据音质偏好获取下载链接
+func (k *Kuwo) fetchAudioURLWithQuality(rid string, quality string) (string, error) {
+	var qualities []string
+	switch quality {
+	case "standard":
+		qualities = []string{"128kmp3"}
+	case "high":
+		qualities = []string{"320kmp3", "128kmp3"}
+	default: // "lossless" or empty
+		qualities = []string{"2000kflac", "flac", "320kmp3", "128kmp3"}
+	}
 	randomID := fmt.Sprintf("C_APK_guanwang_%d%d", time.Now().UnixNano(), rand.Intn(1000000))
 
 	for _, br := range qualities {

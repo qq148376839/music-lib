@@ -430,15 +430,20 @@ func (n *Netease) GetDownloadURL(s *model.Song) (string, error) {
 		songID = s.Extra["song_id"]
 	}
 
-	reqData := map[string]interface{}{
-		"ids": []string{songID},
-		"br":  320000,
+	quality := ""
+	if s.Extra != nil {
+		quality = s.Extra["quality"]
 	}
-	reqJSON, _ := json.Marshal(reqData)
-	params, encSecKey := EncryptWeApi(string(reqJSON))
-	form := url.Values{}
-	form.Set("params", params)
-	form.Set("encSecKey", encSecKey)
+
+	var brList []int
+	switch quality {
+	case "standard":
+		brList = []int{128000}
+	case "high":
+		brList = []int{320000, 128000}
+	default: // "lossless" or empty
+		brList = []int{999000, 320000, 128000}
+	}
 
 	headers := []utils.RequestOption{
 		utils.WithHeader("Referer", Referer),
@@ -446,25 +451,45 @@ func (n *Netease) GetDownloadURL(s *model.Song) (string, error) {
 		utils.WithHeader("Cookie", n.cookie),
 	}
 
-	body, err := utils.Post(DownloadAPI, strings.NewReader(form.Encode()), headers...)
-	if err != nil {
-		return "", err
+	var lastErr error
+	for _, br := range brList {
+		reqData := map[string]interface{}{
+			"ids": []string{songID},
+			"br":  br,
+		}
+		reqJSON, _ := json.Marshal(reqData)
+		params, encSecKey := EncryptWeApi(string(reqJSON))
+		form := url.Values{}
+		form.Set("params", params)
+		form.Set("encSecKey", encSecKey)
+
+		body, err := utils.Post(DownloadAPI, strings.NewReader(form.Encode()), headers...)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var resp struct {
+			Data []struct {
+				URL  string `json:"url"`
+				Code int    `json:"code"`
+				Br   int    `json:"br"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			lastErr = fmt.Errorf("json parse error: %w", err)
+			continue
+		}
+		if len(resp.Data) > 0 && resp.Data[0].URL != "" {
+			return resp.Data[0].URL, nil
+		}
+		lastErr = fmt.Errorf("empty url for br=%d", br)
 	}
 
-	var resp struct {
-		Data []struct {
-			URL  string `json:"url"`
-			Code int    `json:"code"`
-			Br   int    `json:"br"`
-		} `json:"data"`
+	if lastErr != nil {
+		return "", fmt.Errorf("[netease] download url not found for song %s: %w", songID, lastErr)
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("json parse error: %w", err)
-	}
-	if len(resp.Data) == 0 || resp.Data[0].URL == "" {
-		return "", fmt.Errorf("[netease] download url not found for song %s (might be vip or copyright restricted)", songID)
-	}
-	return resp.Data[0].URL, nil
+	return "", fmt.Errorf("[netease] download url not found for song %s (might be vip or copyright restricted)", songID)
 }
 
 // GetLyrics 获取歌词

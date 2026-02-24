@@ -77,6 +77,54 @@ body {
 }
 
 /* ----------------------------------------------------------
+   Quality Setting
+   ---------------------------------------------------------- */
+
+.quality-setting {
+  position: absolute;
+  top: 50%;
+  left: 1.5rem;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quality-label {
+  color: #8b949e;
+  font-size: 13px;
+}
+
+#quality-select {
+  background-color: #161b22;
+  color: #f0f6fc;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M6 8.5L1 3.5h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 22px;
+}
+
+#quality-select:hover,
+#quality-select:focus {
+  border-color: #58a6ff;
+}
+
+#quality-select option {
+  background-color: #161b22;
+  color: #f0f6fc;
+}
+
+/* ----------------------------------------------------------
    Login Button & Status
    ---------------------------------------------------------- */
 
@@ -1236,6 +1284,13 @@ a:hover {
 
   .app-title {
     font-size: 1.2rem;
+  }
+
+  .quality-setting {
+    position: static;
+    transform: none;
+    justify-content: center;
+    margin-top: 8px;
   }
 
   .login-status {
