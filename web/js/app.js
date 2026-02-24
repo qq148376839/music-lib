@@ -907,6 +907,13 @@
     if (task.song && task.song.artist) parts.push(task.song.artist);
     if (task.source) parts.push(getSourceName(task.source));
     meta.textContent = parts.join(' \u00b7 ');
+
+    if (task.fallback_source) {
+      const fbTag = el('span', 'source-tag fallback-tag',
+        getSourceName(task.source) + ' \u2192 ' + getSourceName(task.fallback_source));
+      meta.appendChild(document.createTextNode(' \u00b7 '));
+      meta.appendChild(fbTag);
+    }
     card.appendChild(meta);
 
     // Progress bar for running tasks.

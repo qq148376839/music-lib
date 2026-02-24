@@ -22,18 +22,19 @@ const (
 
 // Task represents a single song download job.
 type Task struct {
-	ID          string     `json:"id"`
-	Source      string     `json:"source"`
-	BatchID     string     `json:"batch_id,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	FilePath    string     `json:"file_path,omitempty"`
-	Song        model.Song `json:"song"`
-	Status      TaskStatus `json:"status"`
-	Skipped     bool       `json:"skipped"`
-	Progress    int64      `json:"progress"`
-	TotalSize   int64      `json:"total_size"`
-	CreatedAt   time.Time  `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ID             string     `json:"id"`
+	Source         string     `json:"source"`
+	FallbackSource string     `json:"fallback_source,omitempty"`
+	BatchID        string     `json:"batch_id,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	FilePath       string     `json:"file_path,omitempty"`
+	Song           model.Song `json:"song"`
+	Status         TaskStatus `json:"status"`
+	Skipped        bool       `json:"skipped"`
+	Progress       int64      `json:"progress"`
+	TotalSize      int64      `json:"total_size"`
+	CreatedAt      time.Time  `json:"created_at"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 
 // BatchInfo summarizes the state of a batch download.
@@ -49,23 +50,25 @@ type BatchInfo struct {
 
 // Manager coordinates download tasks with bounded concurrency.
 type Manager struct {
-	mu       sync.RWMutex
-	tasks    map[string]*Task
-	order    []string
-	counter  int64
-	sem      chan struct{}
-	musicDir string
+	mu        sync.RWMutex
+	tasks     map[string]*Task
+	order     []string
+	counter   int64
+	sem       chan struct{}
+	musicDir  string
+	providers map[string]ProviderFuncs
 }
 
 // NewManager creates a Manager. If concurrency <= 0 it defaults to 3.
-func NewManager(musicDir string, concurrency int) *Manager {
+func NewManager(musicDir string, concurrency int, providers map[string]ProviderFuncs) *Manager {
 	if concurrency <= 0 {
 		concurrency = 3
 	}
 	return &Manager{
-		tasks:    make(map[string]*Task),
-		sem:      make(chan struct{}, concurrency),
-		musicDir: musicDir,
+		tasks:     make(map[string]*Task),
+		sem:       make(chan struct{}, concurrency),
+		musicDir:  musicDir,
+		providers: providers,
 	}
 }
 
@@ -241,8 +244,17 @@ func (m *Manager) runTask(
 	// 1. Get download URL (just-in-time).
 	audioURL, err := getURL(&task.Song)
 	if err != nil {
-		m.failTask(task, fmt.Sprintf("get download url: %v", err))
-		return
+		// Try cross-platform fallback.
+		fallbackURL, fbSource, fbErr := m.tryFallback(task.Song, task.Source)
+		if fbErr != nil {
+			m.failTask(task, fmt.Sprintf("get download url: %v (fallback across %d providers also failed)", err, len(m.providers)-1))
+			return
+		}
+		audioURL = fallbackURL
+		m.mu.Lock()
+		task.FallbackSource = fbSource
+		m.mu.Unlock()
+		log.Printf("[download] task %s fallback: %s → %s for %s", task.ID, task.Source, fbSource, task.Song.Display())
 	}
 
 	// 2. Get lyrics (best-effort).

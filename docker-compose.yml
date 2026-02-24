@@ -9,7 +9,7 @@ services:
     environment:
       - MUSIC_DIR=/mnt/music
     volumes:
-      - /volume1/music:/mnt/music
+      - /volume1/homes/riowang/music:/mnt/music
       - /volume1/docker/music-lib/config:/app/config
       - /volume1/docker/music-lib/data:/app/data
     restart: unless-stopped

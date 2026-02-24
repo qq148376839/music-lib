@@ -742,6 +742,11 @@ textarea:focus {
   line-height: 1.4;
 }
 
+.fallback-tag {
+  background-color: #2d1f00;
+  color: #d29922;
+}
+
 /* ----------------------------------------------------------
    Music Note Icon (playlist cover fallback)
    ---------------------------------------------------------- */

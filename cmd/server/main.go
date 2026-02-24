@@ -175,25 +175,26 @@ func main() {
 		}
 	}
 
+	// Build provider funcs map for download handlers.
+	dlProviders := make(map[string]download.ProviderFuncs)
+	for name, p := range providers {
+		dlProviders[name] = download.ProviderFuncs{
+			Search:         p.Search,
+			GetDownloadURL: p.GetDownloadURL,
+			GetLyrics:      p.GetLyrics,
+		}
+	}
+
 	var dlMgr *download.Manager
 	if musicDir != "" {
 		// Validate directory exists and is writable.
 		if err := os.MkdirAll(musicDir, 0755); err != nil {
 			log.Fatalf("MUSIC_DIR %q is not usable: %v", musicDir, err)
 		}
-		dlMgr = download.NewManager(musicDir, concurrency)
+		dlMgr = download.NewManager(musicDir, concurrency, dlProviders)
 		log.Printf("NAS download enabled: dir=%s concurrency=%d", musicDir, concurrency)
 	} else {
 		log.Printf("NAS download disabled (MUSIC_DIR not set)")
-	}
-
-	// Build provider funcs map for download handlers.
-	dlProviders := make(map[string]download.ProviderFuncs)
-	for name, p := range providers {
-		dlProviders[name] = download.ProviderFuncs{
-			GetDownloadURL: p.GetDownloadURL,
-			GetLyrics:      p.GetLyrics,
-		}
 	}
 
 	dlHandlers := download.NewHandlers(dlMgr, dlProviders)

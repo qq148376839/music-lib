@@ -64,6 +64,18 @@ docker run -d -p 35280:35280 \
 | `DOWNLOAD_CONCURRENCY` | `3` | NAS 并发下载数 |
 | `WEB_DIR` | `web` | 前端静态文件目录 |
 
+### 跨平台回退下载
+
+NAS 批量下载时，部分歌曲可能因 VIP/版权限制无法从原始平台获取下载链接。系统会自动在其他平台搜索同名歌曲并尝试下载，无需手动干预。
+
+回退搜索按以下优先级遍历平台：酷狗 → 酷我 → 咪咕 → QQ → 千千 → 汽水 → 5sing → JOOX → Bilibili → Jamendo
+
+匹配规则：
+- 歌名归一化后完全相等，且歌手名存在包含关系
+- 歌名有一方包含另一方，且歌手名完全匹配（处理 "Song (Remastered)" vs "Song"）
+
+回退成功后文件仍以原始歌曲元数据（歌手/歌名/专辑）命名保存，保持歌单结构一致。前端任务列表中回退下载的歌曲会显示来源标签，如 `网易云 → 酷狗`。
+
 ### 验证服务
 
 ```bash
@@ -263,6 +275,7 @@ func main() {
 music-lib/
 ├── cmd/server/  # HTTP API 服务入口
 ├── model/       # 通用数据结构
+├── download/    # NAS 下载管理（任务队列、跨平台回退）
 ├── provider/    # 接口定义
 ├── utils/       # 公共工具函数
 ├── netease/     # 各个平台的实现
@@ -276,6 +289,7 @@ music-lib/
 ├── jamendo/
 ├── joox/
 ├── bilibili/
+├── web/         # 前端静态文件
 ├── Dockerfile   # Docker 构建文件
 └── README.md
 ```
