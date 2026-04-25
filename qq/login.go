@@ -83,25 +83,40 @@ func removeCookieFromDisk() {
 
 // --- Login status ---
 
-// GetLoginStatus checks whether the current cookie contains the required QQ music keys.
-// Returns loggedIn status and a placeholder nickname.
+// GetLoginStatus checks whether the current cookie contains valid QQ login keys.
+// Accepts both QQ Music tokens (qqmusic_key, qm_keyst) and OAuth tokens (p_skey).
 func GetLoginStatus() (bool, string) {
 	cookie := GetCookie()
 	if cookie == "" {
 		return false, ""
 	}
-	// QQ music requires qqmusic_key or qm_keyst to be considered logged in.
-	if strings.Contains(cookie, "qqmusic_key") || strings.Contains(cookie, "qm_keyst") {
-		// Try to extract uin as nickname hint.
-		for _, part := range strings.Split(cookie, ";") {
-			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "uin=") {
-				return true, strings.TrimPrefix(part, "uin=")
-			}
+	// Accept QQ Music tokens or OAuth tokens (p_skey from QR login).
+	validKeys := []string{"qqmusic_key", "qm_keyst", "p_skey"}
+	loggedIn := false
+	for _, key := range validKeys {
+		if strings.Contains(cookie, key+"=") {
+			loggedIn = true
+			break
 		}
-		return true, "QQ用户"
 	}
-	return false, ""
+	if !loggedIn {
+		return false, ""
+	}
+	// Try to extract uin/p_uin as nickname hint.
+	for _, part := range strings.Split(cookie, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "p_uin=") {
+			v := strings.TrimPrefix(part, "p_uin=")
+			if strings.HasPrefix(v, "o") {
+				v = v[1:]
+			}
+			return true, v
+		}
+		if strings.HasPrefix(part, "uin=") {
+			return true, strings.TrimPrefix(part, "uin=")
+		}
+	}
+	return true, "QQ用户"
 }
 
 // Logout clears the cookie and removes the persisted file.

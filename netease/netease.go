@@ -481,6 +481,22 @@ func (n *Netease) GetDownloadURL(s *model.Song) (string, error) {
 			continue
 		}
 		if len(resp.Data) > 0 && resp.Data[0].URL != "" {
+			// 回写实际音质：优先使用 API 返回的真实 Br 值
+			actualBr := resp.Data[0].Br
+			if actualBr == 0 {
+				actualBr = br
+			}
+			switch {
+			case actualBr >= 900000:
+				s.Ext = "flac"
+				s.Bitrate = 0
+			case actualBr >= 320000:
+				s.Ext = "mp3"
+				s.Bitrate = 320
+			default:
+				s.Ext = "mp3"
+				s.Bitrate = 128
+			}
 			return resp.Data[0].URL, nil
 		}
 		lastErr = fmt.Errorf("empty url for br=%d", br)

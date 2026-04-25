@@ -1164,7 +1164,8 @@ a:hover {
   color: #58a6ff;
 }
 
-.task-status.completed {
+.task-status.completed,
+.task-status.done {
   background-color: rgba(63, 185, 80, 0.15);
   color: #3fb950;
 }
@@ -1271,6 +1272,120 @@ a:hover {
 
 .nas-task-badge.show {
   display: inline-block;
+}
+
+/* ----------------------------------------------------------
+   Quality Tags (actual quality / degraded / upgraded)
+   ---------------------------------------------------------- */
+
+.quality-tag {
+  display: inline-block;
+  background-color: #21262d;
+  color: #8b949e;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+.quality-tag.degraded {
+  background-color: rgba(240, 136, 62, 0.15);
+  color: #f0883e;
+}
+
+.quality-tag.upgraded {
+  background-color: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+}
+
+/* ----------------------------------------------------------
+   Per-Task Upgrade Button
+   ---------------------------------------------------------- */
+
+.task-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.btn-upgrade {
+  background: none;
+  border: none;
+  color: #58a6ff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  transition: color 0.2s;
+}
+
+.btn-upgrade:hover {
+  color: #79c0ff;
+  text-decoration: underline;
+}
+
+.btn-upgrade.loading {
+  pointer-events: none;
+  color: #484f58;
+}
+
+.btn-upgrade.loading::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #484f58;
+  border-top-color: #58a6ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ----------------------------------------------------------
+   Upgrade Bar (Upgrade All)
+   ---------------------------------------------------------- */
+
+.upgrade-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 800px;
+  margin: 0 auto 12px;
+  padding: 10px 16px;
+  background-color: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 10px;
+}
+
+.btn-upgrade-all {
+  background-color: transparent;
+  color: #58a6ff;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+
+.btn-upgrade-all:hover {
+  background-color: rgba(88, 166, 255, 0.12);
+  color: #79c0ff;
+}
+
+.btn-upgrade-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.upgrade-hint {
+  font-size: 12px;
+  color: #8b949e;
 }
 
 /* ----------------------------------------------------------

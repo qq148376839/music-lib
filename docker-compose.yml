@@ -1,15 +1,24 @@
-version: '3.8'
 services:
   music-lib:
     build: .
-    image: music-lib:latest
-    container_name: music-lib
     ports:
       - "35280:35280"
     environment:
-      - MUSIC_DIR=/mnt/music
+      - PORT=35280
+      - GIN_MODE=release
+      - LOG_LEVEL=info
+      - MUSIC_DIR=/music
+      - DATA_DIR=/data
+      - CORS_ORIGINS=*
     volumes:
-      - /volume1/homes/riowang/music:/mnt/music
-      - /volume1/docker/music-lib/config:/app/config
-      - /volume1/docker/music-lib/data:/app/data
+      - ./data:/data       # SQLite database
+      - ./music:/music     # downloaded audio files
+      # NAS deployment — replace with:
+      # - /volume1/music:/music
+      # - /volume1/config/music-lib:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:35280/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

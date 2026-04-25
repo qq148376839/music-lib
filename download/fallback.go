@@ -2,7 +2,7 @@ package download
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -83,7 +83,7 @@ func (m *Manager) tryFallback(song model.Song, originalSource string) (audioURL 
 
 		results, searchErr := pf.Search(keyword)
 		if searchErr != nil {
-			log.Printf("[download] fallback search %s error: %v", name, searchErr)
+			slog.Warn("download.fallback.search_error", "provider", name, "error", searchErr)
 			continue
 		}
 
@@ -93,7 +93,7 @@ func (m *Manager) tryFallback(song model.Song, originalSource string) (audioURL 
 			}
 			url, dlErr := pf.GetDownloadURL(&results[i])
 			if dlErr != nil {
-				log.Printf("[download] fallback download url %s error: %v", name, dlErr)
+				slog.Warn("download.fallback.url_error", "provider", name, "error", dlErr)
 				continue
 			}
 			return url, name, nil

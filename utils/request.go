@@ -98,6 +98,23 @@ func PostRaw(url string, body io.Reader, opts ...RequestOption) (*http.Response,
 	return defaultClient.Do(req)
 }
 
+// GetRaw 发送 HTTP GET 请求并返回原始 *http.Response
+// 调用方负责关闭 resp.Body
+func GetRaw(url string, opts ...RequestOption) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	for _, opt := range opts {
+		opt(req)
+	}
+
+	return defaultClient.Do(req)
+}
+
 // MD5 计算字符串哈希
 func MD5(str string) string {
 	h := md5.New()

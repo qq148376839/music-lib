@@ -1,12 +1,8 @@
 package login
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"os/exec"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -23,6 +19,21 @@ const (
 	StateError       SessionState = "error"
 )
 
+// PollResult is the outcome of a single QR poll cycle.
+type PollResult struct {
+	State    SessionState
+	Cookies  string
+	Nickname string
+}
+
+// QRProvider handles QR code generation and polling for a specific platform.
+type QRProvider interface {
+	// StartQR generates a QR login session. Returns base64 PNG and an opaque session key.
+	StartQR(ctx context.Context) (qrImage string, sessionKey string, err error)
+	// PollQR checks the current login status for the given session key.
+	PollQR(ctx context.Context, sessionKey string) (PollResult, error)
+}
+
 // LoginSession tracks a single platform's login process.
 type LoginSession struct {
 	mu       sync.Mutex
@@ -32,40 +43,38 @@ type LoginSession struct {
 	Nickname string
 	Cookies  string
 	Error    string
-	cmd      *exec.Cmd
 	cancel   context.CancelFunc
 }
 
 // Manager manages login sessions for multiple platforms.
 type Manager struct {
-	mu         sync.RWMutex
-	sessions   map[string]*LoginSession
-	scriptPath string
-	pythonPath string
-	onSuccess  func(platform, cookies, nickname string)
+	mu        sync.RWMutex
+	sessions  map[string]*LoginSession
+	providers map[string]QRProvider
+	onSuccess func(platform, cookies, nickname string)
 }
 
 // NewManager creates a new login manager.
-// onSuccess is called when a login succeeds, allowing the caller to persist cookies.
-func NewManager(scriptPath, pythonPath string, onSuccess func(platform, cookies, nickname string)) *Manager {
-	if pythonPath == "" {
-		pythonPath = "python3"
+func NewManager(providers map[string]QRProvider, onSuccess func(platform, cookies, nickname string)) *Manager {
+	if providers == nil {
+		providers = make(map[string]QRProvider)
 	}
 	return &Manager{
-		sessions:   make(map[string]*LoginSession),
-		scriptPath: scriptPath,
-		pythonPath: pythonPath,
-		onSuccess:  onSuccess,
+		sessions:  make(map[string]*LoginSession),
+		providers: providers,
+		onSuccess: onSuccess,
 	}
 }
 
-// StartLogin begins a login session for the given platform.
-// If a session already exists and is not in a terminal state, it returns an error.
+// StartLogin begins a QR login session for the given platform.
 func (m *Manager) StartLogin(platform string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	provider, ok := m.providers[platform]
+	if !ok {
+		return &ErrNoProvider{Platform: platform}
+	}
 
-	// Kill any existing session for this platform.
+	m.mu.Lock()
+	// Kill any existing session.
 	if existing, ok := m.sessions[platform]; ok {
 		existing.mu.Lock()
 		if existing.cancel != nil {
@@ -81,104 +90,103 @@ func (m *Manager) StartLogin(platform string) error {
 		cancel:   cancel,
 	}
 	m.sessions[platform] = session
+	m.mu.Unlock()
 
-	cmd := exec.CommandContext(ctx, m.pythonPath, m.scriptPath, platform)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-	cmd.Stderr = nil // let Python stderr go to parent's stderr for debugging
-	session.cmd = cmd
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return fmt.Errorf("failed to start login script: %w", err)
-	}
-
-	// Read stdout JSON lines in a goroutine.
-	go func() {
-		defer cancel()
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 4*1024*1024), 4*1024*1024) // 4MB buffer for base64 images
-		for scanner.Scan() {
-			line := scanner.Text()
-			m.handleMessage(platform, line)
-		}
-
-		// Process exited — check if we reached success.
-		_ = cmd.Wait()
-		session.mu.Lock()
-		if session.State != StateSuccess {
-			if session.State != StateError {
-				session.State = StateError
-				if session.Error == "" {
-					session.Error = "登录脚本意外退出"
-				}
-			}
-		}
-		session.mu.Unlock()
-	}()
+	go m.runQRLogin(ctx, cancel, platform, session, provider)
 
 	return nil
 }
 
-// handleMessage parses a JSON line from the Python script.
-func (m *Manager) handleMessage(platform, line string) {
-	m.mu.RLock()
-	session, ok := m.sessions[platform]
-	m.mu.RUnlock()
-	if !ok {
-		return
-	}
+// runQRLogin drives the QR login lifecycle in a goroutine.
+func (m *Manager) runQRLogin(ctx context.Context, cancel context.CancelFunc, platform string, session *LoginSession, provider QRProvider) {
+	defer cancel()
 
-	var msg struct {
-		Type     string `json:"type"`
-		Image    string `json:"image"`
-		Code     int    `json:"code"`
-		Cookies  string `json:"cookies"`
-		Nickname string `json:"nickname"`
-		Message  string `json:"message"`
-	}
-	if err := json.Unmarshal([]byte(line), &msg); err != nil {
-		log.Printf("[login/%s] invalid JSON: %s", platform, line)
+	// Generate QR code.
+	qrImage, sessionKey, err := provider.StartQR(ctx)
+	if err != nil {
+		session.mu.Lock()
+		session.State = StateError
+		session.Error = err.Error()
+		session.mu.Unlock()
+		slog.Warn("login.qr_generate_failed", "platform", platform, "error", err)
 		return
 	}
 
 	session.mu.Lock()
-	defer session.mu.Unlock()
+	session.QRImage = qrImage
+	session.State = StateWaitingScan
+	session.mu.Unlock()
+	slog.Info("login.qr_ready", "platform", platform)
 
-	switch msg.Type {
-	case "qr_ready":
-		session.QRImage = msg.Image
-		session.State = StateWaitingScan
-		log.Printf("[login/%s] QR ready", platform)
+	// Poll loop.
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	case "status":
-		if msg.Code == 802 {
-			session.State = StateScanned
-			log.Printf("[login/%s] scanned", platform)
+	for {
+		select {
+		case <-ctx.Done():
+			session.mu.Lock()
+			if session.State != StateSuccess {
+				session.State = StateExpired
+			}
+			session.mu.Unlock()
+			return
+		case <-ticker.C:
+			result, err := provider.PollQR(ctx, sessionKey)
+			if err != nil {
+				slog.Warn("login.poll_error", "platform", platform, "error", err)
+				continue
+			}
+
+			session.mu.Lock()
+			switch result.State {
+			case StateScanned:
+				if session.State != StateScanned {
+					session.State = StateScanned
+					slog.Info("login.scanned", "platform", platform)
+				}
+			case StateSuccess:
+				session.Cookies = result.Cookies
+				session.Nickname = result.Nickname
+				session.State = StateSuccess
+				session.mu.Unlock()
+				slog.Info("login.success", "platform", platform, "nickname", result.Nickname)
+				if m.onSuccess != nil {
+					m.onSuccess(platform, result.Cookies, result.Nickname)
+				}
+				return
+			case StateExpired:
+				session.State = StateExpired
+				session.mu.Unlock()
+				slog.Info("login.qr_expired", "platform", platform)
+				return
+			case StateError:
+				session.State = StateError
+				session.Error = "登录失败"
+				session.mu.Unlock()
+				return
+			}
+			session.mu.Unlock()
 		}
+	}
+}
 
-	case "login_success":
-		session.Cookies = msg.Cookies
-		session.Nickname = msg.Nickname
-		session.State = StateSuccess
-		log.Printf("[login/%s] success (nickname: %s)", platform, msg.Nickname)
+// SetCookie sets cookies directly (manual cookie input).
+func (m *Manager) SetCookie(platform, cookies, nickname string) {
+	m.mu.Lock()
+	// Create or replace session with success state.
+	session := &LoginSession{
+		Platform: platform,
+		State:    StateSuccess,
+		Cookies:  cookies,
+		Nickname: nickname,
+	}
+	m.sessions[platform] = session
+	m.mu.Unlock()
 
-		// Call the onSuccess callback (sets cookie + persists).
-		if m.onSuccess != nil {
-			m.onSuccess(platform, msg.Cookies, msg.Nickname)
-		}
-
-	case "expired":
-		session.State = StateExpired
-		log.Printf("[login/%s] QR expired, script will refresh", platform)
-
-	case "error":
-		session.Error = msg.Message
-		session.State = StateError
-		log.Printf("[login/%s] error: %s", platform, msg.Message)
+	slog.Info("login.manual_cookie", "platform", platform, "nickname", nickname)
+	if m.onSuccess != nil {
+		m.onSuccess(platform, cookies, nickname)
 	}
 }
 
@@ -213,4 +221,13 @@ func (m *Manager) StopLogin(platform string) {
 		session.cancel()
 	}
 	session.mu.Unlock()
+}
+
+// ErrNoProvider is returned when no QR provider is registered for a platform.
+type ErrNoProvider struct {
+	Platform string
+}
+
+func (e *ErrNoProvider) Error() string {
+	return "no QR login provider for platform: " + e.Platform
 }

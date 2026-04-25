@@ -1,0 +1,37 @@
+# 环境变量
+.env
+.env.local
+
+# Session 日志（自动生成，不提交）
+dev-log/*.md
+
+# 下载缓存
+data/downloads/
+data/video_output/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 参考项目（仅本地参考，不提交）
+_ref_*/
+
+# Frontend build
+frontend/node_modules/
+web/dist/*
+!web/dist/index.html
+
+# OS
+.DS_Store
+Thumbs.db

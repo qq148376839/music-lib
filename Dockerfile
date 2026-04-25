@@ -1,35 +1,26 @@
-# ---- Build Stage ----
-FROM golang:1.21-bookworm AS builder
+# Stage 1: Build Vue frontend
+FROM docker.m.daocloud.io/library/node:20-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN rm -f package-lock.json && npm config set registry https://registry.npmmirror.com && npm install
+COPY frontend/ .
+# vite.config.js outputs to ../web/dist → /app/web/dist
+RUN npm run build
 
-WORKDIR /src
-COPY go.mod ./
-COPY . .
-
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/music-lib-server ./cmd/server
-
-# ---- Production Stage ----
-FROM python:3.11-slim-bookworm
-
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
-    && rm -rf /var/lib/apt/lists/*
-ENV TZ=Asia/Shanghai
-
-RUN pip install --no-cache-dir playwright \
-    && playwright install chromium \
-    && playwright install-deps chromium
-
+# Stage 2: Build Go binary (includes go:embed of web/dist/)
+FROM docker.m.daocloud.io/library/golang:1.24-alpine AS builder
 WORKDIR /app
-COPY --from=builder /app/music-lib-server /usr/local/bin/music-lib-server
-COPY web/ /app/web/
-COPY scripts/login_helper.py /app/scripts/login_helper.py
+COPY go.mod go.sum ./
+RUN GOPROXY=https://goproxy.cn,direct go mod download
+COPY . .
+COPY --from=frontend /app/web/dist ./web/dist
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /music-lib ./cmd/server
 
+# Stage 3: Minimal runtime image
+FROM docker.m.daocloud.io/library/alpine:3.20
+RUN apk --no-cache add ca-certificates tzdata
+COPY --from=builder /music-lib /usr/local/bin/music-lib
 EXPOSE 35280
-ENV PORT=35280
-ENV CONFIG_DIR=/app/config
-ENV MUSIC_DIR=""
-ENV DOWNLOAD_CONCURRENCY=3
-ENV LOGIN_SCRIPT=/app/scripts/login_helper.py
-
-VOLUME ["/mnt/music"]
-
-ENTRYPOINT ["music-lib-server"]
+VOLUME ["/music", "/data"]
+ENV PORT=35280 GIN_MODE=release
+ENTRYPOINT ["music-lib"]

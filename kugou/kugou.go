@@ -390,6 +390,13 @@ func (k *Kugou) GetDownloadURL(s *model.Song) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// 回写实际音质到 Song
+	if info.Ext != "" {
+		s.Ext = info.Ext
+	}
+	if info.Bitrate > 0 {
+		s.Bitrate = info.Bitrate
+	}
 	return info.URL, nil
 }
 

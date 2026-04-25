@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/guohuiyuan/music-lib/utils"
 )
@@ -87,6 +88,30 @@ func (s *Song) Filename() string {
 func (s *Song) LrcFilename() string {
 	base := utils.SanitizeFilename(fmt.Sprintf("%s - %s", s.Artist, s.Name))
 	return base + ".lrc"
+}
+
+// QualityString 返回人类可读的音质描述。
+// 示例: "FLAC", "320kbps MP3", "128kbps M4A"
+// flac/wav 不显示码率，其他格式在前面附加码率信息。
+func (s *Song) QualityString() string {
+	ext := strings.ToLower(s.Ext)
+	switch ext {
+	case "flac", "wav":
+		return strings.ToUpper(ext)
+	case "mp3", "m4a", "aac", "ogg":
+		if s.Bitrate > 0 {
+			return fmt.Sprintf("%dkbps %s", s.Bitrate, strings.ToUpper(ext))
+		}
+		return strings.ToUpper(ext)
+	default:
+		if ext == "" {
+			return ""
+		}
+		if s.Bitrate > 0 {
+			return fmt.Sprintf("%dkbps %s", s.Bitrate, strings.ToUpper(ext))
+		}
+		return strings.ToUpper(ext)
+	}
 }
 
 // Display 用于简单的日志打印

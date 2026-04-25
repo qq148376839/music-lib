@@ -807,10 +807,48 @@
         apiFetch('/api/nas/batches', {}, true),
       ]);
       renderBatchSummary(batches || []);
+      updateUpgradeBar(tasks || []);
       renderNASTaskPanel(tasks || []);
       updateNASBadge(tasks || []);
     } catch {
       // Silent fail for polling.
+    }
+  }
+
+  function updateUpgradeBar(tasks) {
+    if (!dom.upgradeBar) return;
+    const upgradeable = (tasks || []).filter(
+      (t) => (t.status === 'done' || t.status === 'completed') && !t.skipped && !t.upgraded
+    );
+    if (upgradeable.length > 0) {
+      dom.upgradeBar.style.display = '';
+      dom.upgradeHint.textContent = upgradeable.length + ' \u4e2a\u4efb\u52a1\u53ef\u80fd\u53ef\u5347\u7ea7';
+    } else {
+      dom.upgradeBar.style.display = 'none';
+    }
+  }
+
+  async function handleUpgradeAll() {
+    const btn = dom.upgradeAllBtn;
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = '\u5347\u7ea7\u4e2d...';
+    try {
+      const data = await apiFetch(
+        '/api/nas/download/upgrade?quality=' + encodeURIComponent(getQuality()),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_ids: [] }),
+        }
+      );
+      const queued = (data && data.queued) || 0;
+      showToast('\u5df2\u5165\u961f ' + queued + ' \u4e2a\u5347\u7ea7\u4efb\u52a1');
+    } catch (err) {
+      showToast(err.message || '\u5347\u7ea7\u5931\u8d25');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '\u5168\u90e8\u5347\u7ea7';
     }
   }
 
@@ -842,10 +880,11 @@
     const statusLabels = {
       pending: '等待中',
       running: '下载中',
-      completed: '已完成',
+      done: '已完成',
+      completed: '已完成', // legacy alias
       failed: '失败',
     };
-    const isSkipped = task.status === 'completed' && task.skipped;
+    const isSkipped = task.status === 'done' && task.skipped;
     const statusText = isSkipped ? '已存在' : (statusLabels[task.status] || task.status);
     const statusClass = isSkipped ? 'skipped' : task.status;
     const badge = el('span', `task-status ${statusClass}`, statusText);
@@ -864,6 +903,29 @@
       meta.appendChild(document.createTextNode(' \u00b7 '));
       meta.appendChild(fbTag);
     }
+
+    // --- Quality display ---
+    if (task.upgraded) {
+      const prev = task.previous_quality || '?';
+      const actual = task.actual_quality || '?';
+      const upgTag = el('span', 'quality-tag upgraded', '\u2191\u5df2\u5347\u7ea7 ' + prev + ' \u2192 ' + actual);
+      meta.appendChild(upgTag);
+    } else if (task.actual_quality) {
+      const qTag = el('span', 'quality-tag', task.actual_quality);
+      meta.appendChild(qTag);
+
+      // Degraded detection
+      const req = task.requested_quality || '';
+      const actual = task.actual_quality || '';
+      const isDegraded =
+        (req === 'lossless' && actual.toUpperCase().indexOf('FLAC') === -1) ||
+        (req === 'high' && (actual.indexOf('128') !== -1 || actual.toUpperCase().indexOf('M4A') !== -1));
+      if (isDegraded) {
+        const dTag = el('span', 'quality-tag degraded', '\u5df2\u964d\u7ea7');
+        meta.appendChild(dTag);
+      }
+    }
+
     card.appendChild(meta);
 
     if (task.status === 'running') {
@@ -888,9 +950,44 @@
       card.appendChild(errEl);
     }
 
-    if (task.status === 'completed' && task.file_path) {
+    if ((task.status === 'done' || task.status === 'completed') && task.file_path) {
       const pathEl = el('div', 'progress-text', task.file_path);
       card.appendChild(pathEl);
+    }
+
+    // --- Per-song upgrade button ---
+    const isDone = task.status === 'done' || task.status === 'completed';
+    if (isDone && !task.skipped && !task.upgraded) {
+      const footer = el('div', 'task-card-footer');
+      const upgradeBtn = el('button', 'btn-upgrade', '\u2191 \u5347\u7ea7');
+      upgradeBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        upgradeBtn.classList.add('loading');
+        upgradeBtn.textContent = '\u5347\u7ea7\u4e2d...';
+        try {
+          const data = await apiFetch(
+            '/api/nas/download/upgrade?quality=' + encodeURIComponent(getQuality()),
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ task_ids: [task.id] }),
+            }
+          );
+          const queued = (data && data.queued) || 0;
+          if (queued > 0) {
+            showToast('\u5df2\u5165\u961f\u5347\u7ea7\u4efb\u52a1');
+          } else {
+            showToast('\u65e0\u53ef\u5347\u7ea7\u7684\u4efb\u52a1');
+          }
+          upgradeBtn.style.display = 'none';
+        } catch (err) {
+          upgradeBtn.classList.remove('loading');
+          upgradeBtn.textContent = '\u2191 \u5347\u7ea7';
+          showToast(err.message || '\u5347\u7ea7\u5931\u8d25');
+        }
+      });
+      footer.appendChild(upgradeBtn);
+      card.appendChild(footer);
     }
 
     return card;
@@ -909,8 +1006,9 @@
       const card = el('div', 'batch-card');
 
       const header = el('div', 'batch-card-header');
-      header.appendChild(el('span', 'batch-name', batch.playlist_name || batch.id));
-      const stats = `${batch.completed}/${batch.total} 完成`;
+      header.appendChild(el('span', 'batch-name', batch.name || batch.playlist_name || batch.id));
+      const batchDone = batch.done !== undefined ? batch.done : batch.completed;
+      const stats = `${batchDone}/${batch.total} 完成`;
       const extra = [];
       if (batch.running > 0) extra.push(`${batch.running}下载中`);
       if (batch.failed > 0) extra.push(`${batch.failed}失败`);
@@ -920,11 +1018,11 @@
 
       const track = el('div', 'progress-bar-track');
       const fill = el('div', 'progress-bar-fill');
-      const pct = batch.total > 0 ? Math.round((batch.completed + batch.failed) / batch.total * 100) : 0;
+      const pct = batch.total > 0 ? Math.round((batchDone + batch.failed) / batch.total * 100) : 0;
       fill.style.width = pct + '%';
-      if (batch.failed > 0 && batch.completed === 0) {
+      if (batch.failed > 0 && batchDone === 0) {
         fill.style.backgroundColor = '#f85149';
-      } else if (batch.completed === batch.total) {
+      } else if (batchDone === batch.total) {
         fill.style.backgroundColor = '#3fb950';
       }
       track.appendChild(fill);
@@ -1194,6 +1292,9 @@
       qrLoggedIn:         $('#qr-logged-in'),
       qrNickname:         $('#qr-nickname'),
       logoutBtn:          $('#logout-btn'),
+      upgradeBar:         $('#upgrade-bar'),
+      upgradeAllBtn:      $('#upgrade-all-btn'),
+      upgradeHint:        $('#upgrade-hint'),
     };
 
     // --- Quality setting (localStorage persistence) ---
@@ -1257,6 +1358,11 @@
 
     // --- NAS status ---
     checkNASStatus();
+
+    // --- Upgrade All button ---
+    if (dom.upgradeAllBtn) {
+      dom.upgradeAllBtn.addEventListener('click', handleUpgradeAll);
+    }
 
     // --- Dual-platform Login ---
     $$('.btn-login[data-platform]').forEach((btn) => {

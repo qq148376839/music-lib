@@ -1,235 +1,91 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"log"
-	"net/http"
+	"log/slog"
 	"os"
 	"strconv"
 
-	"github.com/guohuiyuan/music-lib/bilibili"
 	"github.com/guohuiyuan/music-lib/download"
-	"github.com/guohuiyuan/music-lib/fivesing"
-	"github.com/guohuiyuan/music-lib/jamendo"
-	"github.com/guohuiyuan/music-lib/joox"
-	"github.com/guohuiyuan/music-lib/kugou"
-	"github.com/guohuiyuan/music-lib/kuwo"
+	"github.com/guohuiyuan/music-lib/internal/api"
+	"github.com/guohuiyuan/music-lib/internal/monitor"
+	"github.com/guohuiyuan/music-lib/internal/store"
 	"github.com/guohuiyuan/music-lib/login"
-	"github.com/guohuiyuan/music-lib/migu"
-	"github.com/guohuiyuan/music-lib/model"
 	"github.com/guohuiyuan/music-lib/netease"
-	"github.com/guohuiyuan/music-lib/qianqian"
 	"github.com/guohuiyuan/music-lib/qq"
-	"github.com/guohuiyuan/music-lib/soda"
 )
 
-// providerFuncs holds the function references for each provider.
-type providerFuncs struct {
-	Search             func(string) ([]model.Song, error)
-	GetDownloadURL     func(*model.Song) (string, error)
-	GetLyrics          func(*model.Song) (string, error)
-	Parse              func(string) (*model.Song, error)
-	SearchPlaylist     func(string) ([]model.Playlist, error)
-	GetPlaylistSongs   func(string) ([]model.Song, error)
-	ParsePlaylist      func(string) (*model.Playlist, []model.Song, error)
-	GetRecommended     func() ([]model.Playlist, error)
-}
-
-var providers map[string]providerFuncs
-
-func init() {
-	providers = map[string]providerFuncs{
-		"netease": {
-			Search:           netease.Search,
-			GetDownloadURL:   netease.GetDownloadURL,
-			GetLyrics:        netease.GetLyrics,
-			Parse:            netease.Parse,
-			SearchPlaylist:   netease.SearchPlaylist,
-			GetPlaylistSongs: netease.GetPlaylistSongs,
-			ParsePlaylist:    netease.ParsePlaylist,
-			GetRecommended:   netease.GetRecommendedPlaylists,
-		},
-		"qq": {
-			Search:           qq.Search,
-			GetDownloadURL:   qq.GetDownloadURL,
-			GetLyrics:        qq.GetLyrics,
-			Parse:            qq.Parse,
-			SearchPlaylist:   qq.SearchPlaylist,
-			GetPlaylistSongs: qq.GetPlaylistSongs,
-			ParsePlaylist:    qq.ParsePlaylist,
-			GetRecommended:   qq.GetRecommendedPlaylists,
-		},
-		"kugou": {
-			Search:           kugou.Search,
-			GetDownloadURL:   kugou.GetDownloadURL,
-			GetLyrics:        kugou.GetLyrics,
-			Parse:            kugou.Parse,
-			SearchPlaylist:   kugou.SearchPlaylist,
-			GetPlaylistSongs: kugou.GetPlaylistSongs,
-			ParsePlaylist:    kugou.ParsePlaylist,
-			GetRecommended:   kugou.GetRecommendedPlaylists,
-		},
-		"kuwo": {
-			Search:           kuwo.Search,
-			GetDownloadURL:   kuwo.GetDownloadURL,
-			GetLyrics:        kuwo.GetLyrics,
-			Parse:            kuwo.Parse,
-			SearchPlaylist:   kuwo.SearchPlaylist,
-			GetPlaylistSongs: kuwo.GetPlaylistSongs,
-			ParsePlaylist:    kuwo.ParsePlaylist,
-			GetRecommended:   kuwo.GetRecommendedPlaylists,
-		},
-		"migu": {
-			Search:           migu.Search,
-			GetDownloadURL:   migu.GetDownloadURL,
-			GetLyrics:        migu.GetLyrics,
-			Parse:            migu.Parse,
-			SearchPlaylist:   migu.SearchPlaylist,
-			GetPlaylistSongs: migu.GetPlaylistSongs,
-		},
-		"qianqian": {
-			Search:           qianqian.Search,
-			GetDownloadURL:   qianqian.GetDownloadURL,
-			GetLyrics:        qianqian.GetLyrics,
-			Parse:            qianqian.Parse,
-			SearchPlaylist:   qianqian.SearchPlaylist,
-			GetPlaylistSongs: qianqian.GetPlaylistSongs,
-		},
-		"soda": {
-			Search:           soda.Search,
-			GetDownloadURL:   soda.GetDownloadURL,
-			GetLyrics:        soda.GetLyrics,
-			Parse:            soda.Parse,
-			SearchPlaylist:   soda.SearchPlaylist,
-			GetPlaylistSongs: soda.GetPlaylistSongs,
-			ParsePlaylist:    soda.ParsePlaylist,
-		},
-		"fivesing": {
-			Search:           fivesing.Search,
-			GetDownloadURL:   fivesing.GetDownloadURL,
-			GetLyrics:        fivesing.GetLyrics,
-			Parse:            fivesing.Parse,
-			SearchPlaylist:   fivesing.SearchPlaylist,
-			GetPlaylistSongs: fivesing.GetPlaylistSongs,
-			ParsePlaylist:    fivesing.ParsePlaylist,
-		},
-		"jamendo": {
-			Search:           jamendo.Search,
-			GetDownloadURL:   jamendo.GetDownloadURL,
-			GetLyrics:        jamendo.GetLyrics,
-			Parse:            jamendo.Parse,
-			SearchPlaylist:   jamendo.SearchPlaylist,
-			GetPlaylistSongs: jamendo.GetPlaylistSongs,
-		},
-		"joox": {
-			Search:           joox.Search,
-			GetDownloadURL:   joox.GetDownloadURL,
-			GetLyrics:        joox.GetLyrics,
-			Parse:            joox.Parse,
-			SearchPlaylist:   joox.SearchPlaylist,
-			GetPlaylistSongs: joox.GetPlaylistSongs,
-		},
-		"bilibili": {
-			Search:           bilibili.Search,
-			GetDownloadURL:   bilibili.GetDownloadURL,
-			GetLyrics:        bilibili.GetLyrics,
-			Parse:            bilibili.Parse,
-			SearchPlaylist:   bilibili.SearchPlaylist,
-			GetPlaylistSongs: bilibili.GetPlaylistSongs,
-			ParsePlaylist:    bilibili.ParsePlaylist,
-		},
-	}
-}
-
-var loginMgr *login.Manager
-
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "35280"
+	// 1. Read environment variables.
+	port := envOr("PORT", "35280")
+	musicDir := os.Getenv("MUSIC_DIR")
+	dataDir := envOr("DATA_DIR", "data")
+	concurrency := envInt("DOWNLOAD_CONCURRENCY", 3)
+	maxRetries := envInt("DOWNLOAD_MAX_RETRIES", 3)
+	retryBackoff := envInt("DOWNLOAD_RETRY_BACKOFF", 2)
+	scrapeEnabled := envBool("SCRAPE_ENABLED", true)
+	scrapeCover := envBool("SCRAPE_COVER", true)
+	scrapeLyrics := envBool("SCRAPE_LYRICS", true)
+	cfgDir := envOr("CONFIG_DIR", dataDir)
+
+	// 2. Initialize slog (JSON handler, level from LOG_LEVEL).
+	initSlog(os.Getenv("LOG_LEVEL"))
+
+	// 3. Init DB.
+	db, err := store.Init(dataDir)
+	if err != nil {
+		slog.Error("failed to init database", "error", err)
+		os.Exit(1)
 	}
 
-	// --- Cookie persistence ---
-	cfgDir := os.Getenv("CONFIG_DIR")
-	if cfgDir == "" {
-		cfgDir = "config"
+	// 4. Mark interrupted tasks as failed.
+	if err := store.MarkRunningAsFailed(db); err != nil {
+		slog.Warn("mark running as failed", "error", err)
 	}
 
-	// Netease
+	// 5. Load existing tasks.
+	existingTasks, err := store.ListAllTasks(db)
+	if err != nil {
+		slog.Warn("load existing tasks", "error", err)
+	}
+
+	// 6. Load cookies.
 	netease.SetConfigDir(cfgDir)
 	netease.LoadCookieFromDisk()
 	if loggedIn, nickname := netease.GetLoginStatus(); loggedIn {
-		log.Printf("netease cookie loaded (user: %s)", nickname)
+		slog.Info("netease cookie loaded", "user", nickname)
 	}
-
-	// QQ
 	qq.SetConfigDir(cfgDir)
 	qq.LoadCookieFromDisk()
 	if loggedIn, nickname := qq.GetLoginStatus(); loggedIn {
-		log.Printf("qq cookie loaded (user: %s)", nickname)
+		slog.Info("qq cookie loaded", "user", nickname)
 	}
 
-	// --- Login manager ---
-	scriptPath := os.Getenv("LOGIN_SCRIPT")
-	if scriptPath == "" {
-		scriptPath = "scripts/login_helper.py"
+	// 7. Login manager.
+	qrProviders := map[string]login.QRProvider{
+		"netease": netease.NewQRProvider(),
+		"qq":      qq.NewQRProvider(),
 	}
-	pythonPath := os.Getenv("PYTHON_PATH")
-	if pythonPath == "" {
-		pythonPath = "python3"
-	}
-
-	loginMgr = login.NewManager(scriptPath, pythonPath, func(platform, cookies, nickname string) {
+	loginMgr := login.NewManager(qrProviders, func(platform, cookies, nickname string) {
 		switch platform {
 		case "netease":
 			netease.SetCookie(cookies)
 			if err := netease.SaveCookieToDisk(cookies, nickname); err != nil {
-				log.Printf("failed to save netease cookie: %v", err)
+				slog.Warn("save netease cookie", "error", err)
 			}
+			slog.Info("login.success", "platform", platform, "nickname", nickname)
 		case "qq":
 			qq.SetCookie(cookies)
 			if err := qq.SaveCookieToDisk(cookies, nickname); err != nil {
-				log.Printf("failed to save qq cookie: %v", err)
+				slog.Warn("save qq cookie", "error", err)
 			}
+			slog.Info("login.success", "platform", platform, "nickname", nickname)
 		}
 	})
 
-	mux := http.NewServeMux()
+	// 8. Build provider funcs map.
+	providers := buildProviders()
 
-	// Health check
-	mux.HandleFunc("/health", handleHealth)
-
-	// List available providers
-	mux.HandleFunc("/providers", handleProviders)
-
-	// Song APIs
-	mux.HandleFunc("/api/search", handleSearch)
-	mux.HandleFunc("/api/lyrics", handleLyrics)
-	mux.HandleFunc("/api/parse", handleParse)
-
-	// Playlist APIs
-	mux.HandleFunc("/api/playlist/search", handlePlaylistSearch)
-	mux.HandleFunc("/api/playlist/songs", handlePlaylistSongs)
-	mux.HandleFunc("/api/playlist/parse", handlePlaylistParse)
-	mux.HandleFunc("/api/playlist/recommended", handlePlaylistRecommended)
-
-	// --- Unified Login API ---
-	mux.HandleFunc("/api/login/qr/start", handleLoginQRStart)
-	mux.HandleFunc("/api/login/qr/poll", handleLoginQRPoll)
-	mux.HandleFunc("/api/login/status", handleLoginStatus)
-	mux.HandleFunc("/api/login/logout", handleLoginLogout)
-
-	// --- Download / NAS ---
-	musicDir := os.Getenv("MUSIC_DIR")
-	concurrency := 3
-	if v := os.Getenv("DOWNLOAD_CONCURRENCY"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			concurrency = n
-		}
-	}
-
-	// Build provider funcs map for download handlers.
+	// 9. Build download provider funcs.
 	dlProviders := make(map[string]download.ProviderFuncs)
 	for name, p := range providers {
 		dlProviders[name] = download.ProviderFuncs{
@@ -239,349 +95,133 @@ func main() {
 		}
 	}
 
+	// 10. Create download manager.
+	dlCfg := download.Config{
+		MusicDir:      musicDir,
+		Concurrency:   concurrency,
+		MaxRetries:    maxRetries,
+		RetryBackoff:  retryBackoff,
+		ScrapeEnabled: scrapeEnabled,
+		ScrapeCover:   scrapeCover,
+		ScrapeLyrics:  scrapeLyrics,
+	}
 	var dlMgr *download.Manager
 	if musicDir != "" {
-		// Validate directory exists and is writable.
 		if err := os.MkdirAll(musicDir, 0755); err != nil {
-			log.Fatalf("MUSIC_DIR %q is not usable: %v", musicDir, err)
+			slog.Error("MUSIC_DIR not usable", "dir", musicDir, "error", err)
+			os.Exit(1)
 		}
-		dlMgr = download.NewManager(musicDir, concurrency, dlProviders)
-		log.Printf("NAS download enabled: dir=%s concurrency=%d", musicDir, concurrency)
+		dlMgr = download.NewManager(dlCfg, dlProviders)
+		slog.Info("NAS download enabled", "dir", musicDir, "concurrency", concurrency)
 	} else {
-		log.Printf("NAS download disabled (MUSIC_DIR not set)")
+		slog.Warn("NAS download disabled (MUSIC_DIR not set)")
 	}
 
-	dlHandlers := download.NewHandlers(dlMgr, dlProviders)
-
-	mux.HandleFunc("/api/download/file", dlHandlers.HandleProxyDownload)
-	mux.HandleFunc("/api/nas/status", dlHandlers.HandleNASStatus)
-	mux.HandleFunc("/api/nas/download", dlHandlers.HandleNASDownload)
-	mux.HandleFunc("/api/nas/download/batch", dlHandlers.HandleNASBatchDownload)
-	mux.HandleFunc("/api/nas/tasks", dlHandlers.HandleListTasks)
-	mux.HandleFunc("/api/nas/task", dlHandlers.HandleGetTask)
-	mux.HandleFunc("/api/nas/batches", dlHandlers.HandleListBatches)
-
-	// Serve frontend static files
-	webDir := os.Getenv("WEB_DIR")
-	if webDir == "" {
-		webDir = "web"
-	}
-	if info, err := os.Stat(webDir); err == nil && info.IsDir() {
-		fileServer := http.FileServer(http.Dir(webDir))
-		mux.Handle("/", fileServer)
-		log.Printf("serving frontend from %s", webDir)
-	}
-
-	log.Printf("music-lib API server starting on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatalf("server failed: %v", err)
-	}
-}
-
-// --- Response helpers ---
-
-type apiResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message,omitempty"`
-	Data    any    `json:"data,omitempty"`
-}
-
-func writeJSON(w http.ResponseWriter, code int, data any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(data)
-}
-
-func writeOK(w http.ResponseWriter, data any) {
-	writeJSON(w, http.StatusOK, apiResponse{Code: 0, Data: data})
-}
-
-func writeError(w http.ResponseWriter, httpCode int, msg string) {
-	writeJSON(w, httpCode, apiResponse{Code: -1, Message: msg})
-}
-
-func getProvider(r *http.Request) (providerFuncs, string, bool) {
-	source := r.URL.Query().Get("source")
-	if source == "" {
-		return providerFuncs{}, "", false
-	}
-	p, ok := providers[source]
-	return p, source, ok
-}
-
-// --- Handlers ---
-
-func handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeOK(w, map[string]string{"status": "ok"})
-}
-
-func handleProviders(w http.ResponseWriter, r *http.Request) {
-	type providerInfo struct {
-		Name             string `json:"name"`
-		Search           bool   `json:"search"`
-		Download         bool   `json:"download"`
-		Lyrics           bool   `json:"lyrics"`
-		Parse            bool   `json:"parse"`
-		PlaylistSearch   bool   `json:"playlist_search"`
-		PlaylistSongs    bool   `json:"playlist_songs"`
-		PlaylistParse    bool   `json:"playlist_parse"`
-		PlaylistRecommended bool `json:"playlist_recommended"`
-	}
-	var list []providerInfo
-	for name, p := range providers {
-		list = append(list, providerInfo{
-			Name:             name,
-			Search:           p.Search != nil,
-			Download:         p.GetDownloadURL != nil,
-			Lyrics:           p.GetLyrics != nil,
-			Parse:            p.Parse != nil,
-			PlaylistSearch:   p.SearchPlaylist != nil,
-			PlaylistSongs:    p.GetPlaylistSongs != nil,
-			PlaylistParse:    p.ParsePlaylist != nil,
-			PlaylistRecommended: p.GetRecommended != nil,
+	// 11. Wire persistence callback.
+	if dlMgr != nil {
+		dlMgr.SetOnTaskUpdate(func(t *download.Task) {
+			if err := store.SaveTask(db, t); err != nil {
+				slog.Warn("save task", "task_id", t.ID, "error", err)
+			}
 		})
+		// 12. Restore history.
+		dlMgr.LoadTasks(existingTasks)
+
+		// 13. Restore batch names from DB.
+		if batchNames, err := store.ListBatchNames(db); err != nil {
+			slog.Warn("load batch names", "error", err)
+		} else {
+			dlMgr.LoadBatchNames(batchNames)
+		}
 	}
-	writeOK(w, list)
+
+	// 14. Start chart monitor scheduler.
+	if dlMgr != nil {
+		chartProviders := make(map[string]monitor.ChartProvider)
+		for name, p := range providers {
+			if p.GetChartSongs != nil {
+				chartProviders[name] = monitor.ChartProvider{
+					GetChartSongs:  p.GetChartSongs,
+					GetDownloadURL: p.GetDownloadURL,
+					GetLyrics:      p.GetLyrics,
+				}
+			}
+		}
+		scheduler := monitor.NewScheduler(db, dlMgr, chartProviders)
+		scheduler.Start()
+		api.SetMonitorScheduler(scheduler)
+		slog.Info("chart monitor enabled", "platforms", len(chartProviders))
+	}
+
+	// 15. Create router.
+	router := api.NewRouter(
+		providers,
+		loginMgr,
+		dlMgr,
+		db,
+		neteaseAuth{},
+		qqAuth{},
+	)
+
+	slog.Info("server starting", "port", port, "music_dir", musicDir, "data_dir", dataDir)
+
+	// 16. Run.
+	if err := router.Run(":" + port); err != nil {
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
+	}
 }
 
-// GET /api/search?source=netease&keyword=周杰伦
-func handleSearch(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
+// --- helpers ---
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	if p.Search == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("search not supported for %s", source))
-		return
-	}
-	keyword := r.URL.Query().Get("keyword")
-	if keyword == "" {
-		writeError(w, http.StatusBadRequest, "missing keyword parameter")
-		return
-	}
-	songs, err := p.Search(keyword)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, songs)
+	return def
 }
 
-// POST /api/lyrics?source=netease  body: Song JSON
-func handleLyrics(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
 	}
-	if p.GetLyrics == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("lyrics not supported for %s", source))
-		return
-	}
-	var song model.Song
-	if err := json.NewDecoder(r.Body).Decode(&song); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	lyrics, err := p.GetLyrics(&song)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, map[string]string{"lyrics": lyrics})
+	return v == "true" || v == "1"
 }
 
-// GET /api/parse?source=netease&link=https://...
-func handleParse(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
 	}
-	if p.Parse == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("parse not supported for %s", source))
-		return
-	}
-	link := r.URL.Query().Get("link")
-	if link == "" {
-		writeError(w, http.StatusBadRequest, "missing link parameter")
-		return
-	}
-	song, err := p.Parse(link)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, song)
+	return def
 }
 
-// GET /api/playlist/search?source=netease&keyword=...
-func handlePlaylistSearch(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
-	}
-	if p.SearchPlaylist == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("playlist search not supported for %s", source))
-		return
-	}
-	keyword := r.URL.Query().Get("keyword")
-	if keyword == "" {
-		writeError(w, http.StatusBadRequest, "missing keyword parameter")
-		return
-	}
-	playlists, err := p.SearchPlaylist(keyword)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, playlists)
-}
-
-// GET /api/playlist/songs?source=netease&id=123456
-func handlePlaylistSongs(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
-	}
-	if p.GetPlaylistSongs == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("playlist songs not supported for %s", source))
-		return
-	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "missing id parameter")
-		return
-	}
-	songs, err := p.GetPlaylistSongs(id)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, songs)
-}
-
-// GET /api/playlist/parse?source=netease&link=https://...
-func handlePlaylistParse(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
-	}
-	if p.ParsePlaylist == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("playlist parse not supported for %s", source))
-		return
-	}
-	link := r.URL.Query().Get("link")
-	if link == "" {
-		writeError(w, http.StatusBadRequest, "missing link parameter")
-		return
-	}
-	playlist, songs, err := p.ParsePlaylist(link)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, map[string]any{
-		"playlist": playlist,
-		"songs":    songs,
-	})
-}
-
-// GET /api/playlist/recommended?source=netease
-func handlePlaylistRecommended(w http.ResponseWriter, r *http.Request) {
-	p, source, ok := getProvider(r)
-	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown or missing source: %q", source))
-		return
-	}
-	if p.GetRecommended == nil {
-		writeError(w, http.StatusNotImplemented, fmt.Sprintf("playlist recommended not supported for %s", source))
-		return
-	}
-	playlists, err := p.GetRecommended()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, playlists)
-}
-
-// --- Unified Login Handlers ---
-
-// POST /api/login/qr/start?platform=netease|qq
-func handleLoginQRStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
-		return
-	}
-	platform := r.URL.Query().Get("platform")
-	if platform != "netease" && platform != "qq" {
-		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
-		return
-	}
-	if err := loginMgr.StartLogin(platform); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeOK(w, map[string]string{"status": "started"})
-}
-
-// GET /api/login/qr/poll?platform=netease|qq
-func handleLoginQRPoll(w http.ResponseWriter, r *http.Request) {
-	platform := r.URL.Query().Get("platform")
-	if platform != "netease" && platform != "qq" {
-		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
-		return
-	}
-	state, qrImage, nickname, errMsg := loginMgr.GetStatus(platform)
-	writeOK(w, map[string]interface{}{
-		"state":    string(state),
-		"qr_image": qrImage,
-		"nickname": nickname,
-		"error":    errMsg,
-	})
-}
-
-// GET /api/login/status?platform=netease|qq
-func handleLoginStatus(w http.ResponseWriter, r *http.Request) {
-	platform := r.URL.Query().Get("platform")
-	switch platform {
-	case "netease":
-		loggedIn, nickname := netease.GetLoginStatus()
-		writeOK(w, map[string]interface{}{
-			"logged_in": loggedIn,
-			"nickname":  nickname,
-		})
-	case "qq":
-		loggedIn, nickname := qq.GetLoginStatus()
-		writeOK(w, map[string]interface{}{
-			"logged_in": loggedIn,
-			"nickname":  nickname,
-		})
+func initSlog(level string) {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
 	default:
-		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
+		lvl = slog.LevelInfo
 	}
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl})
+	slog.SetDefault(slog.New(h))
 }
 
-// POST /api/login/logout?platform=netease|qq
-func handleLoginLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "POST required")
-		return
-	}
-	platform := r.URL.Query().Get("platform")
-	switch platform {
-	case "netease":
-		netease.Logout()
-		writeOK(w, map[string]string{"status": "ok"})
-	case "qq":
-		qq.Logout()
-		writeOK(w, map[string]string{"status": "ok"})
-	default:
-		writeError(w, http.StatusBadRequest, "platform must be 'netease' or 'qq'")
-	}
-}
+// neteaseAuth wraps the netease package-level functions as a PlatformAuth.
+type neteaseAuth struct{}
+
+func (neteaseAuth) GetLoginStatus() (bool, string) { return netease.GetLoginStatus() }
+func (neteaseAuth) Logout()                         { netease.Logout() }
+
+// qqAuth wraps the qq package-level functions as a PlatformAuth.
+type qqAuth struct{}
+
+func (qqAuth) GetLoginStatus() (bool, string) { return qq.GetLoginStatus() }
+func (qqAuth) Logout()                         { qq.Logout() }

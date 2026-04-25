@@ -574,6 +574,21 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 				lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result)
 				continue
 			}
+			// 回写实际音质到 Song
+			switch rate.Prefix {
+			case "F000":
+				s.Ext = "flac"
+				s.Bitrate = 0
+			case "M800":
+				s.Ext = "mp3"
+				s.Bitrate = 320
+			case "M500":
+				s.Ext = "mp3"
+				s.Bitrate = 128
+			case "C400":
+				s.Ext = "m4a"
+				s.Bitrate = 96
+			}
 			return "http://ws.stream.qqmusic.qq.com/" + info.Purl, nil
 		}
 	}
