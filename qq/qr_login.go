@@ -3,416 +3,383 @@ package qq
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"net/http/cookiejar"
-	"net/url"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/eclipse/paho.golang/paho"
+	"nhooyr.io/websocket"
 
 	"github.com/guohuiyuan/music-lib/login"
 )
 
 const (
-	xloginURL    = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin?appid=716027609&daid=383&style=33&login_text=%E7%99%BB%E5%BD%95&hide_title_bar=1&hide_border=0&target=self&s_url=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&pt_3rd_aid=100497308&pt_feedback_link=https%3A%2F%2Fsupport.qq.com%2Fproducts%2F77942&theme=2&verify_theme="
-	ptqrshowFmt  = "https://ssl.ptlogin2.qq.com/ptqrshow?appid=716027609&e=2&l=M&s=3&d=72&v=4&t=0.%d&daid=383&pt_3rd_aid=100497308"
-	ptqrloginFmt = "https://ssl.ptlogin2.qq.com/ptqrlogin?u1=https%%3A%%2F%%2Fgraph.qq.com%%2Foauth2.0%%2Flogin_jump&ptqrtoken=%d&ptredirect=0&h=1&t=1&g=1&from_ui=1&ptlang=2052&action=0-0-%d&js_ver=24102114&js_type=1&pt_uistyle=40&aid=716027609&daid=383&pt_3rd_aid=100497308&has_resolve=0"
-
-	qqUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	musicuURL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+	mqttWSURL = "wss://mu.y.qq.com/ws/handshake"
+	qqUA      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-var (
-	ptuiCBRe = regexp.MustCompile(`ptuiCB\('(\d+)',\s*'(\d+)',\s*'([^']*)',\s*'(\d+)',\s*'([^']*)',\s*'([^']*)'(?:,\s*'([^']*)')?\)`)
-)
-
-// QQQRProvider implements login.QRProvider for QQ Music.
+// QQQRProvider implements login.QRProvider for QQ Music native QR login.
+// Uses MQTT over WebSocket to receive scan events from mu.y.qq.com.
 type QQQRProvider struct {
 	mu       sync.Mutex
-	sessions map[string]*qqSession
+	sessions map[string]*qqMusicSession
 }
 
-type qqSession struct {
-	qrsig      string
-	ptLoginSig string
+type qqMusicSession struct {
+	qrcodeID string
+	cancel   context.CancelFunc
+
+	mu      sync.Mutex
+	state   string            // waiting, scanned, cookies, timeout, canceled, error
+	cookies map[string]string // populated when state == "cookies"
 }
 
 // NewQRProvider creates a QQ Music QR login provider.
 func NewQRProvider() *QQQRProvider {
 	return &QQQRProvider{
-		sessions: make(map[string]*qqSession),
+		sessions: make(map[string]*qqMusicSession),
 	}
 }
 
-// hash33 computes the ptqrtoken from qrsig cookie.
-func hash33(s string) int {
-	e := 0
-	for _, c := range s {
-		e += (e << 5) + int(c)
-	}
-	return e & 0x7FFFFFFF
-}
-
-// StartQR generates a QR code for QQ Music login.
+// StartQR generates a QR code via QQ Music's native CreateQRCode API.
 func (p *QQQRProvider) StartQR(ctx context.Context) (string, string, error) {
-	// Step 1: Get pt_login_sig from xlogin page.
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // Don't follow redirects.
+	reqBody := map[string]interface{}{
+		"comm": map[string]interface{}{"ct": 11, "cv": 14090008},
+		"req_0": map[string]interface{}{
+			"module": "music.login.LoginServer",
+			"method": "CreateQRCode",
+			"param":  map[string]interface{}{"tmeAppID": "qqmusic", "ct": 11, "cv": 14090008},
 		},
 	}
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", xloginURL, nil)
+	bodyJSON, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequestWithContext(ctx, "POST", musicuURL, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", qqUA)
-	resp, err := client.Do(req)
+	req.Header.Set("Referer", "https://y.qq.com/")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("xlogin request: %w", err)
-	}
-	resp.Body.Close()
-
-	ptLoginSig := getCookieValue(resp.Cookies(), "pt_login_sig")
-
-	// Step 2: Get QR code image + qrsig from ptqrshow.
-	showURL := fmt.Sprintf(ptqrshowFmt, time.Now().UnixMilli())
-	req, _ = http.NewRequestWithContext(ctx, "GET", showURL, nil)
-	req.Header.Set("User-Agent", qqUA)
-	req.Header.Set("Referer", xloginURL)
-
-	resp, err = client.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("ptqrshow request: %w", err)
+		return "", "", fmt.Errorf("CreateQRCode: %w", err)
 	}
 	defer resp.Body.Close()
 
-	imgBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", fmt.Errorf("read qr image: %w", err)
-	}
+	respBody, _ := io.ReadAll(resp.Body)
 
-	qrsig := getCookieValue(resp.Cookies(), "qrsig")
-	if qrsig == "" {
-		return "", "", fmt.Errorf("no qrsig cookie in ptqrshow response")
-	}
-
-	b64 := base64.StdEncoding.EncodeToString(imgBytes)
-	slog.Info("qq.qr_image_generated", "image_bytes", len(imgBytes), "qrsig_len", len(qrsig))
-
-	// Store session.
-	p.mu.Lock()
-	p.sessions[qrsig] = &qqSession{
-		qrsig:      qrsig,
-		ptLoginSig: ptLoginSig,
-	}
-	p.mu.Unlock()
-
-	return b64, qrsig, nil
-}
-
-// PollQR checks the QR scan status.
-func (p *QQQRProvider) PollQR(ctx context.Context, sessionKey string) (login.PollResult, error) {
-	qrsig := sessionKey
-	ptqrtoken := hash33(qrsig)
-
-	// Retrieve pt_login_sig from session.
-	p.mu.Lock()
-	sess, ok := p.sessions[qrsig]
-	p.mu.Unlock()
-	if !ok {
-		return login.PollResult{State: login.StateError}, fmt.Errorf("qq session not found for qrsig")
-	}
-
-	loginURL := fmt.Sprintf(ptqrloginFmt, ptqrtoken, time.Now().Unix())
-
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	req, _ := http.NewRequestWithContext(ctx, "GET", loginURL, nil)
-	req.Header.Set("User-Agent", qqUA)
-	req.Header.Set("Referer", "https://xui.ptlogin2.qq.com/")
-	req.Header.Set("Cookie", "qrsig="+qrsig+"; pt_login_sig="+sess.ptLoginSig)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return login.PollResult{}, fmt.Errorf("ptqrlogin request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	text := string(body)
-
-	matches := ptuiCBRe.FindStringSubmatch(text)
-	if len(matches) < 7 {
-		slog.Warn("qq.poll_unexpected_response", "body_len", len(text), "body_head", text[:min(len(text), 200)], "body_tail", text[max(0, len(text)-100):])
-		return login.PollResult{}, fmt.Errorf("unexpected ptqrlogin response: %s", text[:min(len(text), 200)])
-	}
-
-	code := matches[1]
-	redirectURL := matches[3]
-	nickname := matches[6]
-
-	slog.Info("qq.poll_result", "code", code, "nickname", nickname, "has_redirect", redirectURL != "")
-
-	switch code {
-	case "66": // Not scanned
-		return login.PollResult{State: login.StateWaitingScan}, nil
-	case "67": // Scanned, waiting confirmation
-		return login.PollResult{State: login.StateScanned}, nil
-	case "65": // QR expired
-		return login.PollResult{State: login.StateExpired}, nil
-	case "0": // Success
-		cookies, err := p.followRedirect(ctx, redirectURL, qrsig)
-		if err != nil {
-			slog.Error("qq.follow_redirect_failed", "error", err)
-			return login.PollResult{State: login.StateError}, fmt.Errorf("follow redirect: %w", err)
-		}
-		if nickname == "" {
-			nickname = extractUin(cookies)
-		}
-
-		// Cleanup session.
-		p.mu.Lock()
-		delete(p.sessions, qrsig)
-		p.mu.Unlock()
-
-		slog.Info("qq.login_success", "nickname", nickname, "cookie_len", len(cookies))
-		return login.PollResult{
-			State:    login.StateSuccess,
-			Cookies:  cookies,
-			Nickname: nickname,
-		}, nil
-	default:
-		slog.Warn("qq.poll_unknown_code", "code", code, "body", text[:min(len(text), 200)])
-		return login.PollResult{State: login.StateError}, fmt.Errorf("ptqrlogin code: %s", code)
-	}
-}
-
-// followRedirect completes the QQ Music login in 4 steps:
-//  1. Follow ptqrlogin redirect → check_sig → get p_skey cookies
-//  2. POST OAuth2 authorize → get authorization code
-//  3. POST musicu.fcg QQLogin → exchange code for musickey
-//  4. Build cookie string with musicid + musickey (= qqmusic_key)
-func (p *QQQRProvider) followRedirect(ctx context.Context, redirectURL, qrsig string) (string, error) {
-	if redirectURL == "" {
-		return "", fmt.Errorf("empty redirect URL")
-	}
-
-	jar, _ := cookiejar.New(nil)
-
-	// Don't follow redirects automatically — we need to inspect intermediate responses.
-	noRedirectClient := &http.Client{
-		Timeout: 15 * time.Second,
-		Jar:     jar,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	// Auto-follow client for check_sig.
-	followClient := &http.Client{
-		Timeout: 15 * time.Second,
-		Jar:     jar,
-	}
-
-	// --- Step 1: Follow redirect to check_sig, collect p_skey cookies ---
-	req, _ := http.NewRequestWithContext(ctx, "GET", redirectURL, nil)
-	req.Header.Set("User-Agent", qqUA)
-	req.Header.Set("Referer", "https://xui.ptlogin2.qq.com/")
-	req.Header.Set("Cookie", "qrsig="+qrsig)
-
-	resp, err := followClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("check_sig request: %w", err)
-	}
-	resp.Body.Close()
-
-	slog.Info("qq.step1_check_sig", "final_url", resp.Request.URL.String(), "status", resp.StatusCode)
-
-	// Extract p_skey for g_tk computation.
-	var pSkey string
-	graphURL, _ := url.Parse("https://graph.qq.com")
-	for _, c := range jar.Cookies(graphURL) {
-		if c.Name == "p_skey" {
-			pSkey = c.Value
-		}
-	}
-	if pSkey == "" {
-		return "", fmt.Errorf("p_skey not found after check_sig")
-	}
-
-	gtk := computeGTK(pSkey)
-	slog.Info("qq.step1_done", "p_skey_len", len(pSkey), "g_tk", gtk)
-
-	// --- Step 2: POST OAuth2 authorize to get authorization code ---
-	authForm := url.Values{
-		"response_type": {"code"},
-		"client_id":     {"100497308"},
-		"redirect_uri":  {"https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/"},
-		"scope":         {"get_user_info,get_app_friends"},
-		"state":         {"state"},
-		"switch":        {""},
-		"from_ptlogin":  {"1"},
-		"src":           {"1"},
-		"update_auth":   {"1"},
-		"openapi":       {"1010_1030"},
-		"g_tk":          {strconv.Itoa(gtk)},
-		"auth_time":     {strconv.FormatInt(time.Now().UnixMilli(), 10)},
-		"ui":            {fmt.Sprintf("%d", time.Now().UnixNano())},
-	}
-
-	authReq, _ := http.NewRequestWithContext(ctx, "POST", "https://graph.qq.com/oauth2.0/authorize", strings.NewReader(authForm.Encode()))
-	authReq.Header.Set("User-Agent", qqUA)
-	authReq.Header.Set("Referer", "https://graph.qq.com/")
-	authReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	authResp, err := noRedirectClient.Do(authReq)
-	if err != nil {
-		return "", fmt.Errorf("oauth authorize: %w", err)
-	}
-	authResp.Body.Close()
-
-	location := authResp.Header.Get("Location")
-	slog.Info("qq.step2_authorize", "status", authResp.StatusCode, "location_len", len(location))
-
-	if location == "" {
-		return "", fmt.Errorf("no redirect from authorize (status %d)", authResp.StatusCode)
-	}
-
-	// Extract code from redirect URL.
-	locURL, err := url.Parse(location)
-	if err != nil {
-		return "", fmt.Errorf("parse authorize redirect: %w", err)
-	}
-	code := locURL.Query().Get("code")
-	if code == "" {
-		return "", fmt.Errorf("no code in authorize redirect: %s", location[:min(len(location), 200)])
-	}
-	slog.Info("qq.step2_done", "code_len", len(code))
-
-	// --- Step 3: Exchange code for musickey via musicu.fcg ---
-	musicReqBody := map[string]interface{}{
-		"comm": map[string]interface{}{
-			"tmeLoginType": 2,
-			"format":       "json",
-		},
-		"req1": map[string]interface{}{
-			"module": "QQConnectLogin.LoginServer",
-			"method": "QQLogin",
-			"param": map[string]interface{}{
-				"code": code,
-			},
-		},
-	}
-	musicJSON, _ := json.Marshal(musicReqBody)
-
-	musicReq, _ := http.NewRequestWithContext(ctx, "POST", "https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(musicJSON))
-	musicReq.Header.Set("User-Agent", qqUA)
-	musicReq.Header.Set("Referer", "https://y.qq.com/")
-	musicReq.Header.Set("Content-Type", "application/json")
-
-	musicResp, err := http.DefaultClient.Do(musicReq)
-	if err != nil {
-		return "", fmt.Errorf("musicu.fcg QQLogin: %w", err)
-	}
-	defer musicResp.Body.Close()
-
-	musicBody, _ := io.ReadAll(musicResp.Body)
-
-	var musicResult struct {
+	var result struct {
 		Code int `json:"code"`
-		Req1 struct {
+		Req0 struct {
 			Code int `json:"code"`
 			Data struct {
-				MusicID      string `json:"musicid"`
-				MusicKey     string `json:"musickey"`
-				OpenID       string `json:"openid"`
-				RefreshKey   string `json:"refresh_key"`
-				RefreshToken string `json:"refresh_token"`
-				LoginType    int    `json:"login_type"`
+				QRCode   string `json:"qrcode"`
+				QRCodeID string `json:"qrcodeID"`
 			} `json:"data"`
-		} `json:"req1"`
+		} `json:"req_0"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", "", fmt.Errorf("parse CreateQRCode: %w", err)
+	}
+	if result.Req0.Code != 0 {
+		return "", "", fmt.Errorf("CreateQRCode code=%d", result.Req0.Code)
 	}
 
-	if err := json.Unmarshal(musicBody, &musicResult); err != nil {
-		return "", fmt.Errorf("parse QQLogin response: %w (body: %s)", err, string(musicBody[:min(len(musicBody), 300)]))
+	qrImage := result.Req0.Data.QRCode
+	qrcodeID := result.Req0.Data.QRCodeID
+	if qrcodeID == "" {
+		return "", "", fmt.Errorf("empty qrcodeID")
 	}
 
-	if musicResult.Req1.Code != 0 {
-		return "", fmt.Errorf("QQLogin failed: code=%d (body: %s)", musicResult.Req1.Code, string(musicBody[:min(len(musicBody), 500)]))
+	// Strip data URI prefix — frontend expects raw base64.
+	if i := strings.Index(qrImage, ","); i >= 0 {
+		qrImage = qrImage[i+1:]
 	}
 
-	musicID := musicResult.Req1.Data.MusicID
-	musicKey := musicResult.Req1.Data.MusicKey
+	// Start MQTT listener for scan events.
+	mqttCtx, mqttCancel := context.WithCancel(context.Background())
+	sess := &qqMusicSession{qrcodeID: qrcodeID, cancel: mqttCancel, state: "waiting"}
 
-	if musicKey == "" {
-		return "", fmt.Errorf("empty musickey from QQLogin response")
+	p.mu.Lock()
+	p.sessions[qrcodeID] = sess
+	p.mu.Unlock()
+
+	go p.listenMQTT(mqttCtx, sess)
+
+	slog.Info("qq.qr_created", "qrcodeID_len", len(qrcodeID), "image_len", len(qrImage))
+	return qrImage, qrcodeID, nil
+}
+
+// listenMQTT connects to QQ Music's MQTT broker via WebSocket and listens for scan events.
+func (p *QQQRProvider) listenMQTT(ctx context.Context, sess *qqMusicSession) {
+	defer sess.cancel()
+
+	wsConn, _, err := websocket.Dial(ctx, mqttWSURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Origin":     {"https://y.qq.com"},
+			"Referer":    {"https://y.qq.com/"},
+			"User-Agent": {qqUA},
+		},
+		Subprotocols: []string{"mqtt"},
+	})
+	if err != nil {
+		slog.Error("qq.mqtt_dial_failed", "error", err)
+		sess.mu.Lock()
+		sess.state = "error"
+		sess.mu.Unlock()
+		return
+	}
+	wsConn.SetReadLimit(1 << 20)
+
+	netConn := websocket.NetConn(ctx, wsConn, websocket.MessageBinary)
+
+	router := paho.NewStandardRouter()
+	router.RegisterHandler("management.qrcode_login/"+sess.qrcodeID, func(m *paho.Publish) {
+		p.handleMQTTMessage(sess, m)
+	})
+
+	client := paho.NewClient(paho.ClientConfig{
+		Conn:   netConn,
+		Router: router,
+		OnClientError: func(err error) {
+			slog.Warn("qq.mqtt_client_error", "error", err)
+		},
+	})
+
+	connAck, err := client.Connect(ctx, &paho.Connect{
+		KeepAlive:  45,
+		CleanStart: true,
+		Properties: &paho.ConnectProperties{
+			AuthMethod: "pass",
+			User: paho.UserProperties{
+				{Key: "tmeAppID", Value: "qqmusic"},
+				{Key: "business", Value: "management"},
+				{Key: "hashTag", Value: sess.qrcodeID},
+				{Key: "clientTag", Value: "management.user"},
+				{Key: "userID", Value: sess.qrcodeID},
+			},
+		},
+	})
+	if err != nil {
+		slog.Error("qq.mqtt_connect_failed", "error", err)
+		sess.mu.Lock()
+		sess.state = "error"
+		sess.mu.Unlock()
+		return
+	}
+	if connAck.ReasonCode != 0 {
+		slog.Error("qq.mqtt_connect_rejected", "code", connAck.ReasonCode)
+		sess.mu.Lock()
+		sess.state = "error"
+		sess.mu.Unlock()
+		return
 	}
 
-	slog.Info("qq.step3_done", "musicid", musicID, "musickey_len", len(musicKey))
+	slog.Info("qq.mqtt_connected")
 
-	// --- Step 4: Build final cookie string ---
-	cookieParts := []string{
-		"uin=" + musicID,
-		"qqmusic_key=" + musicKey,
-		"qm_keyst=" + musicKey,
+	_, err = client.Subscribe(ctx, &paho.Subscribe{
+		Subscriptions: []paho.SubscribeOptions{{
+			Topic: "management.qrcode_login/" + sess.qrcodeID,
+			QoS:   0,
+		}},
+		Properties: &paho.SubscribeProperties{
+			User: paho.UserProperties{
+				{Key: "authorization", Value: "tmelogin"},
+				{Key: "pubsub", Value: "unicast"},
+			},
+		},
+	})
+	if err != nil {
+		slog.Error("qq.mqtt_subscribe_failed", "error", err)
+		sess.mu.Lock()
+		sess.state = "error"
+		sess.mu.Unlock()
+		return
 	}
 
-	// Include p_skey and other OAuth cookies for compatibility.
-	for _, domain := range []string{"https://graph.qq.com", "https://qq.com"} {
-		if u, parseErr := url.Parse(domain); parseErr == nil {
-			for _, c := range jar.Cookies(u) {
-				if c.Name == "p_skey" || c.Name == "p_uin" || c.Name == "pt4_token" {
-					cookieParts = append(cookieParts, c.Name+"="+c.Value)
-				}
+	slog.Info("qq.mqtt_subscribed")
+
+	// Block until context is cancelled (session cleanup or timeout).
+	<-ctx.Done()
+	_ = client.Disconnect(&paho.Disconnect{})
+}
+
+func (p *QQQRProvider) handleMQTTMessage(sess *qqMusicSession, m *paho.Publish) {
+	var msgType string
+	if m.Properties != nil {
+		for _, u := range m.Properties.User {
+			if u.Key == "type" {
+				msgType = u.Value
+				break
 			}
 		}
 	}
 
-	// Deduplicate by name.
-	seen := make(map[string]bool)
-	var unique []string
-	for _, part := range cookieParts {
-		name := strings.SplitN(part, "=", 2)[0]
-		if !seen[name] {
-			seen[name] = true
-			unique = append(unique, part)
-		}
+	slog.Info("qq.mqtt_message", "type", msgType, "payload_len", len(m.Payload))
+
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	switch msgType {
+	case "scanned":
+		sess.state = "scanned"
+	case "canceled":
+		sess.state = "canceled"
+	case "timeout":
+		sess.state = "timeout"
+	case "loginFailed":
+		sess.state = "error"
+	case "cookies":
+		sess.state = "cookies"
+		sess.cookies = parseMQTTCookies(m.Payload)
+	default:
+		slog.Warn("qq.mqtt_unknown_type", "type", msgType)
 	}
-
-	cookies := strings.Join(unique, "; ")
-	slog.Info("qq.login_complete", "musicid", musicID, "cookie_keys", len(unique))
-
-	return cookies, nil
 }
 
-func getCookieValue(cookies []*http.Cookie, name string) string {
-	for _, c := range cookies {
-		if c.Name == name {
-			return c.Value
+func parseMQTTCookies(payload []byte) map[string]string {
+	var raw struct {
+		Cookies map[string]json.RawMessage `json:"cookies"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		slog.Warn("qq.parse_mqtt_cookies", "error", err)
+		return nil
+	}
+	out := make(map[string]string, len(raw.Cookies))
+	for k, v := range raw.Cookies {
+		var obj struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(v, &obj) == nil && obj.Value != "" {
+			out[k] = obj.Value
+			continue
+		}
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			out[k] = s
 		}
 	}
-	return ""
+	return out
 }
 
-func extractUin(cookies string) string {
-	for _, part := range strings.Split(cookies, ";") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "uin=") {
-			v := strings.TrimPrefix(part, "uin=")
-			if strings.HasPrefix(v, "o") {
-				v = v[1:]
-			}
-			return v
-		}
+// PollQR checks QR scan status from MQTT state.
+func (p *QQQRProvider) PollQR(ctx context.Context, sessionKey string) (login.PollResult, error) {
+	p.mu.Lock()
+	sess, ok := p.sessions[sessionKey]
+	p.mu.Unlock()
+	if !ok {
+		return login.PollResult{State: login.StateError}, fmt.Errorf("qq session not found")
 	}
-	return "QQ用户"
+
+	sess.mu.Lock()
+	state := sess.state
+	cookies := sess.cookies
+	sess.mu.Unlock()
+
+	switch state {
+	case "waiting":
+		return login.PollResult{State: login.StateWaitingScan}, nil
+	case "scanned":
+		return login.PollResult{State: login.StateScanned}, nil
+	case "timeout":
+		p.cleanup(sessionKey)
+		return login.PollResult{State: login.StateExpired}, nil
+	case "canceled", "error":
+		p.cleanup(sessionKey)
+		return login.PollResult{State: login.StateError}, fmt.Errorf("login failed")
+	case "cookies":
+		result, err := p.exchangeForMusicKey(ctx, sess.qrcodeID, cookies)
+		p.cleanup(sessionKey)
+		if err != nil {
+			slog.Error("qq.exchange_failed", "error", err)
+			return login.PollResult{State: login.StateError}, err
+		}
+		return result, nil
+	default:
+		return login.PollResult{State: login.StateWaitingScan}, nil
+	}
+}
+
+// exchangeForMusicKey exchanges MQTT cookies for a full QQ Music credential.
+func (p *QQQRProvider) exchangeForMusicKey(ctx context.Context, qrcodeID string, cookies map[string]string) (login.PollResult, error) {
+	uin := cookies["qqmusic_uin"]
+	key := cookies["qqmusic_key"]
+	if uin == "" || key == "" {
+		return login.PollResult{}, fmt.Errorf("missing qqmusic_uin/qqmusic_key in MQTT cookies")
+	}
+
+	var musicid int
+	fmt.Sscanf(uin, "%d", &musicid)
+
+	reqBody := map[string]interface{}{
+		"comm": map[string]interface{}{"tmeLoginType": 6},
+		"req_0": map[string]interface{}{
+			"module": "music.login.LoginServer",
+			"method": "Login",
+			"param":  map[string]interface{}{"musicid": musicid, "qrCodeID": qrcodeID, "token": key},
+		},
+	}
+
+	bodyJSON, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequestWithContext(ctx, "POST", musicuURL, bytes.NewReader(bodyJSON))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", qqUA)
+	req.Header.Set("Referer", "https://y.qq.com/")
+
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return login.PollResult{}, fmt.Errorf("Login request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	var result struct {
+		Code int `json:"code"`
+		Req0 struct {
+			Code int `json:"code"`
+			Data struct {
+				MusicID    int    `json:"musicid"`
+				StrMusicID string `json:"str_musicid"`
+				MusicKey   string `json:"musickey"`
+			} `json:"data"`
+		} `json:"req_0"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return login.PollResult{}, fmt.Errorf("parse Login: %w (body: %s)", err, string(respBody[:min(len(respBody), 300)]))
+	}
+	if result.Req0.Code != 0 {
+		return login.PollResult{}, fmt.Errorf("Login code=%d (body: %s)", result.Req0.Code, string(respBody[:min(len(respBody), 500)]))
+	}
+
+	mid := result.Req0.Data.StrMusicID
+	if mid == "" {
+		mid = fmt.Sprintf("%d", result.Req0.Data.MusicID)
+	}
+	mkey := result.Req0.Data.MusicKey
+	if mkey == "" {
+		return login.PollResult{}, fmt.Errorf("empty musickey")
+	}
+
+	slog.Info("qq.login_done", "musicid", mid, "musickey_len", len(mkey))
+
+	cookieStr := fmt.Sprintf("uin=%s; qqmusic_key=%s; qm_keyst=%s", mid, mkey, mkey)
+	return login.PollResult{
+		State:    login.StateSuccess,
+		Cookies:  cookieStr,
+		Nickname: mid,
+	}, nil
+}
+
+func (p *QQQRProvider) cleanup(qrcodeID string) {
+	p.mu.Lock()
+	if sess, ok := p.sessions[qrcodeID]; ok {
+		sess.cancel()
+		delete(p.sessions, qrcodeID)
+	}
+	p.mu.Unlock()
 }
