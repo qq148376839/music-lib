@@ -527,8 +527,9 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		rates = []Rate{{"F000", "flac"}, {"M800", "mp3"}, {"M500", "mp3"}, {"C400", "m4a"}}
 	}
 
-	// Extract uin from cookie for authenticated requests.
+	// Extract uin and g_tk from cookie for authenticated requests.
 	uin := q.extractUin()
+	gtk := q.getGTK()
 
 	var lastErr string
 
@@ -536,7 +537,7 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		filename := fmt.Sprintf("%s%s%s.%s", rate.Prefix, songMID, songMID, rate.Ext)
 
 		reqData := map[string]interface{}{
-			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": uin, "g_tk_new_20200303": 5381, "g_tk": 5381},
+			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": uin, "g_tk_new_20200303": gtk, "g_tk": gtk},
 			"req_1": map[string]interface{}{"module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{"guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": uin, "loginflag": 1, "platform": "20", "filename": []string{filename}}},
 		}
 
@@ -620,6 +621,42 @@ func (q *QQ) extractUin() string {
 		}
 	}
 	return "0"
+}
+
+// computeGTK computes the g_tk (csrf token) from a session key cookie value.
+// Uses the same hash algorithm as QQ Music's web client.
+func computeGTK(skey string) int {
+	hash := 5381
+	for i := 0; i < len(skey); i++ {
+		hash += (hash << 5) + int(skey[i])
+	}
+	return hash & 0x7FFFFFFF
+}
+
+// extractCookieValue returns the value of a named cookie from the cookie string.
+func extractCookieValue(cookie, name string) string {
+	for _, part := range strings.Split(cookie, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, name+"=") {
+			return strings.TrimPrefix(part, name+"=")
+		}
+	}
+	return ""
+}
+
+// getGTK returns the computed g_tk for this QQ instance's cookie.
+// Falls back to 5381 (anonymous) if no session key is found.
+func (q *QQ) getGTK() int {
+	if q.cookie == "" {
+		return 5381
+	}
+	// Try skey variants in priority order.
+	for _, key := range []string{"p_skey", "skey", "qm_keyst"} {
+		if v := extractCookieValue(q.cookie, key); v != "" {
+			return computeGTK(v)
+		}
+	}
+	return 5381
 }
 
 // fetchSongDetail 内部方法：通过 songmid 获取详情
