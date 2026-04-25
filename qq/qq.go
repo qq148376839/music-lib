@@ -527,14 +527,17 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		rates = []Rate{{"F000", "flac"}, {"M800", "mp3"}, {"M500", "mp3"}, {"C400", "m4a"}}
 	}
 
+	// Extract uin from cookie for authenticated requests.
+	uin := q.extractUin()
+
 	var lastErr string
 
 	for _, rate := range rates {
 		filename := fmt.Sprintf("%s%s%s.%s", rate.Prefix, songMID, songMID, rate.Ext)
 
 		reqData := map[string]interface{}{
-			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": 0, "g_tk_new_20200303": 5381, "g_tk": 5381},
-			"req_1": map[string]interface{}{"module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{"guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": "0", "loginflag": 1, "platform": "20", "filename": []string{filename}}},
+			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": uin, "g_tk_new_20200303": 5381, "g_tk": 5381},
+			"req_1": map[string]interface{}{"module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{"guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": uin, "loginflag": 1, "platform": "20", "filename": []string{filename}}},
 		}
 
 		jsonData, _ := json.Marshal(reqData)
@@ -593,6 +596,30 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("download url not found: %s", lastErr)
+}
+
+// extractUin extracts the QQ uin (number) from the cookie string.
+// Returns "0" if no uin is found (anonymous).
+func (q *QQ) extractUin() string {
+	if q.cookie == "" {
+		return "0"
+	}
+	for _, part := range strings.Split(q.cookie, ";") {
+		part = strings.TrimSpace(part)
+		for _, prefix := range []string{"p_uin=", "uin="} {
+			if strings.HasPrefix(part, prefix) {
+				v := strings.TrimPrefix(part, prefix)
+				// Strip leading "o" from p_uin (e.g., "o0148376839" → "148376839").
+				v = strings.TrimLeft(v, "o")
+				// Strip leading zeros.
+				v = strings.TrimLeft(v, "0")
+				if v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return "0"
 }
 
 // fetchSongDetail 内部方法：通过 songmid 获取详情
