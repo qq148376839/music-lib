@@ -1,8 +1,10 @@
 package qq
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,80 +197,201 @@ func (p *QQQRProvider) PollQR(ctx context.Context, sessionKey string) (login.Pol
 	}
 }
 
-// followRedirect follows the OAuth redirect chain to capture all cookies,
-// then attempts the QQ Music authorize step to get qqmusic_key.
+// followRedirect completes the QQ Music login in 4 steps:
+//  1. Follow ptqrlogin redirect → check_sig → get p_skey cookies
+//  2. POST OAuth2 authorize → get authorization code
+//  3. POST musicu.fcg QQLogin → exchange code for musickey
+//  4. Build cookie string with musicid + musickey (= qqmusic_key)
 func (p *QQQRProvider) followRedirect(ctx context.Context, redirectURL, qrsig string) (string, error) {
 	if redirectURL == "" {
 		return "", fmt.Errorf("empty redirect URL")
 	}
 
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{
+
+	// Don't follow redirects automatically — we need to inspect intermediate responses.
+	noRedirectClient := &http.Client{
+		Timeout: 15 * time.Second,
+		Jar:     jar,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	// Auto-follow client for check_sig.
+	followClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Jar:     jar,
 	}
 
+	// --- Step 1: Follow redirect to check_sig, collect p_skey cookies ---
 	req, _ := http.NewRequestWithContext(ctx, "GET", redirectURL, nil)
 	req.Header.Set("User-Agent", qqUA)
+	req.Header.Set("Referer", "https://xui.ptlogin2.qq.com/")
 	req.Header.Set("Cookie", "qrsig="+qrsig)
 
-	resp, err := client.Do(req)
+	resp, err := followClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("redirect request: %w", err)
+		return "", fmt.Errorf("check_sig request: %w", err)
 	}
 	resp.Body.Close()
 
-	slog.Info("qq.follow_redirect", "final_url", resp.Request.URL.String(), "status", resp.StatusCode)
+	slog.Info("qq.step1_check_sig", "final_url", resp.Request.URL.String(), "status", resp.StatusCode)
 
-	// Step 2: Try QQ Music authorize to get qqmusic_key.
-	// This exchanges OAuth tokens (p_skey) for QQ Music tokens.
-	authURL := "https://graph.qq.com/oauth2.0/authorize?response_type=code&client_id=100497308&redirect_uri=https%3A%2F%2Fy.qq.com%2Fcgi-bin%2Fmusicu.fcg%3Fcallback&state=&display=&scope="
-	authReq, _ := http.NewRequestWithContext(ctx, "GET", authURL, nil)
-	authReq.Header.Set("User-Agent", qqUA)
-	authReq.Header.Set("Referer", "https://graph.qq.com/")
-	authResp, authErr := client.Do(authReq)
-	if authErr != nil {
-		slog.Warn("qq.authorize_step_failed", "error", authErr)
-	} else {
-		authResp.Body.Close()
-		slog.Info("qq.authorize_step", "final_url", authResp.Request.URL.String(), "status", authResp.StatusCode)
+	// Extract p_skey for g_tk computation.
+	var pSkey string
+	graphURL, _ := url.Parse("https://graph.qq.com")
+	for _, c := range jar.Cookies(graphURL) {
+		if c.Name == "p_skey" {
+			pSkey = c.Value
+		}
+	}
+	if pSkey == "" {
+		return "", fmt.Errorf("p_skey not found after check_sig")
 	}
 
-	// Collect all cookies from the jar across all domains.
-	var parts []string
-	for _, domain := range []string{
-		"https://y.qq.com",
-		"https://qq.com",
-		"https://graph.qq.com",
-		"https://ptlogin2.qq.com",
-		"https://ssl.ptlogin2.qq.com",
-	} {
-		if u, err := url.Parse(domain); err == nil {
+	gtk := computeGTK(pSkey)
+	slog.Info("qq.step1_done", "p_skey_len", len(pSkey), "g_tk", gtk)
+
+	// --- Step 2: POST OAuth2 authorize to get authorization code ---
+	authForm := url.Values{
+		"response_type": {"code"},
+		"client_id":     {"100497308"},
+		"redirect_uri":  {"https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/"},
+		"scope":         {"get_user_info,get_app_friends"},
+		"state":         {"state"},
+		"switch":        {""},
+		"from_ptlogin":  {"1"},
+		"src":           {"1"},
+		"update_auth":   {"1"},
+		"openapi":       {"1010_1030"},
+		"g_tk":          {strconv.Itoa(gtk)},
+		"auth_time":     {strconv.FormatInt(time.Now().UnixMilli(), 10)},
+		"ui":            {fmt.Sprintf("%d", time.Now().UnixNano())},
+	}
+
+	authReq, _ := http.NewRequestWithContext(ctx, "POST", "https://graph.qq.com/oauth2.0/authorize", strings.NewReader(authForm.Encode()))
+	authReq.Header.Set("User-Agent", qqUA)
+	authReq.Header.Set("Referer", "https://graph.qq.com/")
+	authReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	authResp, err := noRedirectClient.Do(authReq)
+	if err != nil {
+		return "", fmt.Errorf("oauth authorize: %w", err)
+	}
+	authResp.Body.Close()
+
+	location := authResp.Header.Get("Location")
+	slog.Info("qq.step2_authorize", "status", authResp.StatusCode, "location_len", len(location))
+
+	if location == "" {
+		return "", fmt.Errorf("no redirect from authorize (status %d)", authResp.StatusCode)
+	}
+
+	// Extract code from redirect URL.
+	locURL, err := url.Parse(location)
+	if err != nil {
+		return "", fmt.Errorf("parse authorize redirect: %w", err)
+	}
+	code := locURL.Query().Get("code")
+	if code == "" {
+		return "", fmt.Errorf("no code in authorize redirect: %s", location[:min(len(location), 200)])
+	}
+	slog.Info("qq.step2_done", "code_len", len(code))
+
+	// --- Step 3: Exchange code for musickey via musicu.fcg ---
+	musicReqBody := map[string]interface{}{
+		"comm": map[string]interface{}{
+			"tmeLoginType": 2,
+			"format":       "json",
+		},
+		"req1": map[string]interface{}{
+			"module": "QQConnectLogin.LoginServer",
+			"method": "QQLogin",
+			"param": map[string]interface{}{
+				"code": code,
+			},
+		},
+	}
+	musicJSON, _ := json.Marshal(musicReqBody)
+
+	musicReq, _ := http.NewRequestWithContext(ctx, "POST", "https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(musicJSON))
+	musicReq.Header.Set("User-Agent", qqUA)
+	musicReq.Header.Set("Referer", "https://y.qq.com/")
+	musicReq.Header.Set("Content-Type", "application/json")
+
+	musicResp, err := http.DefaultClient.Do(musicReq)
+	if err != nil {
+		return "", fmt.Errorf("musicu.fcg QQLogin: %w", err)
+	}
+	defer musicResp.Body.Close()
+
+	musicBody, _ := io.ReadAll(musicResp.Body)
+
+	var musicResult struct {
+		Code int `json:"code"`
+		Req1 struct {
+			Code int `json:"code"`
+			Data struct {
+				MusicID      string `json:"musicid"`
+				MusicKey     string `json:"musickey"`
+				OpenID       string `json:"openid"`
+				RefreshKey   string `json:"refresh_key"`
+				RefreshToken string `json:"refresh_token"`
+				LoginType    int    `json:"login_type"`
+			} `json:"data"`
+		} `json:"req1"`
+	}
+
+	if err := json.Unmarshal(musicBody, &musicResult); err != nil {
+		return "", fmt.Errorf("parse QQLogin response: %w (body: %s)", err, string(musicBody[:min(len(musicBody), 300)]))
+	}
+
+	if musicResult.Req1.Code != 0 {
+		return "", fmt.Errorf("QQLogin failed: code=%d (body: %s)", musicResult.Req1.Code, string(musicBody[:min(len(musicBody), 500)]))
+	}
+
+	musicID := musicResult.Req1.Data.MusicID
+	musicKey := musicResult.Req1.Data.MusicKey
+
+	if musicKey == "" {
+		return "", fmt.Errorf("empty musickey from QQLogin response")
+	}
+
+	slog.Info("qq.step3_done", "musicid", musicID, "musickey_len", len(musicKey))
+
+	// --- Step 4: Build final cookie string ---
+	cookieParts := []string{
+		"uin=" + musicID,
+		"qqmusic_key=" + musicKey,
+		"qm_keyst=" + musicKey,
+	}
+
+	// Include p_skey and other OAuth cookies for compatibility.
+	for _, domain := range []string{"https://graph.qq.com", "https://qq.com"} {
+		if u, parseErr := url.Parse(domain); parseErr == nil {
 			for _, c := range jar.Cookies(u) {
-				parts = append(parts, c.Name+"="+c.Value)
+				if c.Name == "p_skey" || c.Name == "p_uin" || c.Name == "pt4_token" {
+					cookieParts = append(cookieParts, c.Name+"="+c.Value)
+				}
 			}
 		}
 	}
 
-	// Also include cookies from the response headers directly.
-	for _, c := range resp.Cookies() {
-		parts = append(parts, c.Name+"="+c.Value)
-	}
-
-	// Deduplicate.
+	// Deduplicate by name.
 	seen := make(map[string]bool)
 	var unique []string
-	for _, p := range parts {
-		name := strings.SplitN(p, "=", 2)[0]
+	for _, part := range cookieParts {
+		name := strings.SplitN(part, "=", 2)[0]
 		if !seen[name] {
 			seen[name] = true
-			unique = append(unique, p)
+			unique = append(unique, part)
 		}
 	}
 
-	slog.Info("qq.cookies_collected", "count", len(unique), "has_qqmusic_key", seen["qqmusic_key"], "has_p_skey", seen["p_skey"])
+	cookies := strings.Join(unique, "; ")
+	slog.Info("qq.login_complete", "musicid", musicID, "cookie_keys", len(unique))
 
-	return strings.Join(unique, "; "), nil
+	return cookies, nil
 }
 
 func getCookieValue(cookies []*http.Cookie, name string) string {
