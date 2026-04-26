@@ -314,17 +314,20 @@ func (p *QQQRProvider) exchangeForMusicKey(ctx context.Context, qrcodeID string,
 		return login.PollResult{}, fmt.Errorf("missing qqmusic_uin/qqmusic_key in MQTT cookies")
 	}
 
-	var musicid int
-	fmt.Sscanf(uin, "%d", &musicid)
+	// Use tmeLoginType from MQTT cookies if available (server tells us the actual type).
+	loginType := 2 // default QQ
+	if lt := cookies["tmeLoginType"]; lt != "" {
+		fmt.Sscanf(lt, "%d", &loginType)
+	}
 
-	slog.Info("qq.exchange_request", "uin", uin, "musicid", musicid, "key_len", len(key), "key_prefix", key[:min(len(key), 10)], "qrcodeID_len", len(qrcodeID))
+	slog.Info("qq.exchange_request", "uin", uin, "key_len", len(key), "key_prefix", key[:min(len(key), 10)], "loginType", loginType, "qrcodeID_len", len(qrcodeID))
 
 	reqBody := map[string]interface{}{
-		"comm": map[string]interface{}{"tmeLoginType": 6},
+		"comm": map[string]interface{}{"tmeLoginType": loginType},
 		"req_0": map[string]interface{}{
 			"module": "music.login.LoginServer",
 			"method": "Login",
-			"param":  map[string]interface{}{"musicid": musicid, "qrCodeID": qrcodeID, "token": key},
+			"param":  map[string]interface{}{"musicid": uin, "qrCodeID": qrcodeID, "token": key},
 		},
 	}
 
