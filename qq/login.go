@@ -44,8 +44,26 @@ func getDefault() *QQ {
 // --- Cookie persistence ---
 
 type cookieFile struct {
-	Cookie   string `json:"cookie"`
-	Nickname string `json:"nickname"`
+	Cookie    string `json:"cookie"`
+	Nickname  string `json:"nickname"`
+	LoginType string `json:"login_type,omitempty"`
+}
+
+// loginType stores the tmeLoginType from MQTT QR login.
+var loginTypeVal string
+
+// SetLoginType stores the login type for app-mode auth.
+func SetLoginType(lt string) {
+	loginMu.Lock()
+	defer loginMu.Unlock()
+	loginTypeVal = lt
+}
+
+// getLoginType returns the stored login type.
+func getLoginType() string {
+	loginMu.RLock()
+	defer loginMu.RUnlock()
+	return loginTypeVal
 }
 
 func cookiePath() string {
@@ -64,16 +82,20 @@ func LoadCookieFromDisk() {
 	var cf cookieFile
 	if json.Unmarshal(data, &cf) == nil && cf.Cookie != "" {
 		SetCookie(cf.Cookie)
+		if cf.LoginType != "" {
+			SetLoginType(cf.LoginType)
+		}
 	}
 }
 
-// SaveCookieToDisk persists the cookie and nickname to disk.
+// SaveCookieToDisk persists the cookie, nickname, and login type to disk.
 func SaveCookieToDisk(cookie, nickname string) error {
+	lt := getLoginType()
 	p := cookiePath()
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(cookieFile{Cookie: cookie, Nickname: nickname}, "", "  ")
+	data, _ := json.MarshalIndent(cookieFile{Cookie: cookie, Nickname: nickname, LoginType: lt}, "", "  ")
 	return os.WriteFile(p, data, 0600)
 }
 

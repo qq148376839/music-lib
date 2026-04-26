@@ -305,8 +305,14 @@ func (p *QQQRProvider) PollQR(ctx context.Context, sessionKey string) (login.Pol
 			p.cleanup(sessionKey)
 			return login.PollResult{State: login.StateError}, fmt.Errorf("missing qqmusic_uin/qqmusic_key")
 		}
-		cookieStr := fmt.Sprintf("uin=%s; qqmusic_key=%s; qm_keyst=%s", uin, key, key)
-		slog.Info("qq.login_direct_cookies", "uin", uin, "key_len", len(key), "key_prefix", key[:min(len(key), 10)])
+		lt := cookies["tmeLoginType"]
+		if lt == "" {
+			lt = "2"
+		}
+		cookieStr := fmt.Sprintf("uin=%s; qqmusic_key=%s; qm_keyst=%s; tmeLoginType=%s", uin, key, key, lt)
+		// Persist login type for app-mode auth.
+		SetLoginType(lt)
+		slog.Info("qq.login_direct_cookies", "uin", uin, "key_len", len(key), "key_prefix", key[:min(len(key), 10)], "loginType", lt)
 		p.cleanup(sessionKey)
 		return login.PollResult{
 			State:    login.StateSuccess,

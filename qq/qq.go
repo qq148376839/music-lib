@@ -20,10 +20,27 @@ import (
 
 const (
 	UserAgent       = "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1"
+	AppUserAgent    = "QQ%E9%9F%B3%E4%B9%90/73222 CFNetwork/1406.0.3 Darwin/22.4.0"
 	SearchReferer   = "http://m.y.qq.com"
 	DownloadReferer = "http://y.qq.com"
 	LyricReferer    = "https://y.qq.com/portal/player.html"
+
+	// App-mode API parameters (for qqmusic_key auth).
+	appCV = 13020508
+	appCT = "11"
 )
+
+// authMode holds the detected authentication mode and extracted credentials.
+type authMode struct {
+	mode      string // "app" or "web"
+	uin       string
+	authst    string // qqmusic_key value (app mode only)
+	gtk       int    // g_tk value (web mode only)
+	loginType string // tmeLoginType, default "2"
+}
+
+// hexGUIDChars is the character set for generating 32-char hex GUIDs.
+const hexGUIDChars = "abcdef1234567890"
 
 type QQ struct {
 	cookie string
@@ -648,8 +665,11 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		songMID = s.Extra["songmid"]
 	}
 
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	guid := fmt.Sprintf("%d", r.Int63n(9000000000)+1000000000)
+	auth := q.detectAuthMode()
+	guid := generateHexGUID()
+
+	slog.Info("qq.auth_mode", "mode", auth.mode, "uin", auth.uin)
+
 	type Rate struct {
 		Prefix string
 		Ext    string
@@ -670,76 +690,184 @@ func (q *QQ) GetDownloadURL(s *model.Song) (string, error) {
 		rates = []Rate{{"F000", "flac"}, {"M800", "mp3"}, {"M500", "mp3"}, {"C400", "m4a"}}
 	}
 
-	// Extract uin and g_tk from cookie for authenticated requests.
-	uin := q.extractUin()
-	gtk := q.getGTK()
-
 	var lastErr string
 
 	for _, rate := range rates {
 		filename := fmt.Sprintf("%s%s%s.%s", rate.Prefix, songMID, songMID, rate.Ext)
 
-		reqData := map[string]interface{}{
-			"comm":  map[string]interface{}{"cv": 4747474, "ct": 24, "format": "json", "inCharset": "utf-8", "outCharset": "utf-8", "notice": 0, "platform": "yqq.json", "needNewCode": 1, "uin": uin, "g_tk_new_20200303": gtk, "g_tk": gtk},
-			"req_1": map[string]interface{}{"module": "music.vkey.GetVkey", "method": "UrlGetVkey", "param": map[string]interface{}{"guid": guid, "songmid": []string{songMID}, "songtype": []int{0}, "uin": uin, "loginflag": 1, "platform": "20", "filename": []string{filename}}},
+		// Build request based on auth mode.
+		var reqData map[string]interface{}
+		var respKey string
+		var ua string
+
+		if auth.mode == "app" {
+			respKey = "music.vkey.GetVkey.UrlGetVkey"
+			ua = AppUserAgent
+			reqData = map[string]interface{}{
+				"comm": map[string]interface{}{
+					"cv":            appCV,
+					"v":             appCV,
+					"ct":            appCT,
+					"tmeAppID":      "qqmusic",
+					"format":        "json",
+					"inCharset":     "utf-8",
+					"outCharset":    "utf-8",
+					"qq":            auth.uin,
+					"authst":        auth.authst,
+					"tmeLoginType":  auth.loginType,
+				},
+				respKey: map[string]interface{}{
+					"module": "music.vkey.GetVkey",
+					"method": "UrlGetVkey",
+					"param": map[string]interface{}{
+						"guid":     guid,
+						"songmid":  []string{songMID},
+						"songtype": []int{0},
+						"uin":      auth.uin,
+						"loginflag": 1,
+						"platform": "20",
+						"filename": []string{filename},
+					},
+				},
+			}
+		} else {
+			respKey = "req_1"
+			ua = UserAgent
+			reqData = map[string]interface{}{
+				"comm": map[string]interface{}{
+					"cv": 4747474, "ct": 24, "format": "json",
+					"inCharset": "utf-8", "outCharset": "utf-8",
+					"notice": 0, "platform": "yqq.json", "needNewCode": 1,
+					"uin": auth.uin, "g_tk_new_20200303": auth.gtk, "g_tk": auth.gtk,
+				},
+				respKey: map[string]interface{}{
+					"module": "music.vkey.GetVkey",
+					"method": "UrlGetVkey",
+					"param": map[string]interface{}{
+						"guid": guid, "songmid": []string{songMID},
+						"songtype": []int{0}, "uin": auth.uin,
+						"loginflag": 1, "platform": "20",
+						"filename": []string{filename},
+					},
+				},
+			}
 		}
 
 		jsonData, _ := json.Marshal(reqData)
+
+		// Compute zzb sign and append to URL.
+		apiURL := "https://u.y.qq.com/cgi-bin/musicu.fcg"
+		sign := zzbSign(string(jsonData))
+		if sign != "" {
+			apiURL += "?sign=" + sign + "&signature=" + sign
+		}
+
 		headers := []utils.RequestOption{
-			utils.WithHeader("User-Agent", UserAgent),
+			utils.WithHeader("User-Agent", ua),
 			utils.WithHeader("Referer", DownloadReferer),
 			utils.WithHeader("Content-Type", "application/json"),
 			utils.WithHeader("Cookie", q.cookie),
 		}
 
-		body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg", bytes.NewReader(jsonData), headers...)
+		body, err := utils.Post(apiURL, bytes.NewReader(jsonData), headers...)
 		if err != nil {
 			lastErr = err.Error()
 			continue
 		}
 
-		var result struct {
-			Req1 struct {
-				Data struct {
-					MidUrlInfo []struct {
-						Purl    string `json:"purl"`
-						WifiUrl string `json:"wifiurl"`
-						Result  int    `json:"result"`
-						ErrMsg  string `json:"errtype"`
-					} `json:"midurlinfo"`
-				} `json:"data"`
-			} `json:"req_1"`
-		}
-
-		if err := json.Unmarshal(body, &result); err != nil {
-			lastErr = "json parse error"
+		// Parse response using the correct key.
+		purl, resultCode, parseErr := parseVkeyResponse(body, respKey)
+		if parseErr != nil {
+			lastErr = parseErr.Error()
 			continue
 		}
-		if len(result.Req1.Data.MidUrlInfo) > 0 {
-			info := result.Req1.Data.MidUrlInfo[0]
-			if info.Purl == "" {
-				lastErr = fmt.Sprintf("empty purl (result code: %d)", info.Result)
-				continue
-			}
-			// 回写实际音质到 Song
-			switch rate.Prefix {
-			case "F000":
-				s.Ext = "flac"
-				s.Bitrate = 0
-			case "M800":
-				s.Ext = "mp3"
-				s.Bitrate = 320
-			case "M500":
-				s.Ext = "mp3"
-				s.Bitrate = 128
-			case "C400":
-				s.Ext = "m4a"
-				s.Bitrate = 96
-			}
-			return "http://ws.stream.qqmusic.qq.com/" + info.Purl, nil
+		if purl == "" {
+			slog.Debug("qq.vkey_attempt", "rate", rate.Prefix, "purl_empty", true, "result_code", resultCode, "auth_mode", auth.mode)
+			lastErr = fmt.Sprintf("empty purl (result code: %d, auth_mode: %s)", resultCode, auth.mode)
+			continue
 		}
+
+		// 回写实际音质到 Song
+		switch rate.Prefix {
+		case "F000":
+			s.Ext = "flac"
+			s.Bitrate = 0
+		case "M800":
+			s.Ext = "mp3"
+			s.Bitrate = 320
+		case "M500":
+			s.Ext = "mp3"
+			s.Bitrate = 128
+		case "C400":
+			s.Ext = "m4a"
+			s.Bitrate = 96
+		}
+		slog.Debug("qq.vkey_attempt", "rate", rate.Prefix, "purl_empty", false, "auth_mode", auth.mode)
+		return "http://ws.stream.qqmusic.qq.com/" + purl, nil
 	}
 	return "", fmt.Errorf("download url not found: %s", lastErr)
+}
+
+// detectAuthMode examines the cookie to determine app or web auth mode.
+func (q *QQ) detectAuthMode() authMode {
+	uin := q.extractUin()
+
+	// App mode: cookie contains qqmusic_key (from MQTT QR login).
+	if key := extractCookieValue(q.cookie, "qqmusic_key"); key != "" {
+		lt := extractCookieValue(q.cookie, "tmeLoginType")
+		if lt == "" {
+			lt = getLoginType() // from persisted login type
+			if lt == "" {
+				lt = "2"
+			}
+		}
+		return authMode{mode: "app", uin: uin, authst: key, loginType: lt}
+	}
+
+	// Web mode: cookie contains p_skey or skey (from OAuth login).
+	return authMode{mode: "web", uin: uin, gtk: q.getGTK()}
+}
+
+// generateHexGUID returns a 32-character random hex string (chars: a-f, 0-9).
+func generateHexGUID() string {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = hexGUIDChars[r.Intn(len(hexGUIDChars))]
+	}
+	return string(b)
+}
+
+// parseVkeyResponse extracts purl from a GetVkey response using the given top-level key.
+func parseVkeyResponse(body []byte, key string) (purl string, resultCode int, err error) {
+	// Use a generic map to handle the dynamic response key.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", 0, fmt.Errorf("json parse error: %w", err)
+	}
+
+	vkeyData, ok := raw[key]
+	if !ok {
+		return "", 0, fmt.Errorf("response key %q not found", key)
+	}
+
+	var result struct {
+		Data struct {
+			MidUrlInfo []struct {
+				Purl    string `json:"purl"`
+				WifiUrl string `json:"wifiurl"`
+				Result  int    `json:"result"`
+			} `json:"midurlinfo"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(vkeyData, &result); err != nil {
+		return "", 0, fmt.Errorf("vkey data parse error: %w", err)
+	}
+	if len(result.Data.MidUrlInfo) == 0 {
+		return "", 0, nil
+	}
+	info := result.Data.MidUrlInfo[0]
+	return info.Purl, info.Result, nil
 }
 
 // extractUin extracts the QQ uin (number) from the cookie string.
