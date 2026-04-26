@@ -236,6 +236,8 @@ func (p *QQQRProvider) handleMQTTMessage(sess *qqMusicSession, m *paho.Publish) 
 	case "cookies":
 		sess.state = "cookies"
 		sess.cookies = parseMQTTCookies(m.Payload)
+		slog.Info("qq.mqtt_cookies_raw", "payload", string(m.Payload[:min(len(m.Payload), 500)]))
+		slog.Info("qq.mqtt_cookies_parsed", "keys", fmt.Sprintf("%v", sess.cookies))
 	default:
 		slog.Warn("qq.mqtt_unknown_type", "type", msgType)
 	}
@@ -314,6 +316,8 @@ func (p *QQQRProvider) exchangeForMusicKey(ctx context.Context, qrcodeID string,
 
 	var musicid int
 	fmt.Sscanf(uin, "%d", &musicid)
+
+	slog.Info("qq.exchange_request", "uin", uin, "musicid", musicid, "key_len", len(key), "key_prefix", key[:min(len(key), 10)], "qrcodeID_len", len(qrcodeID))
 
 	reqBody := map[string]interface{}{
 		"comm": map[string]interface{}{"tmeLoginType": 6},
