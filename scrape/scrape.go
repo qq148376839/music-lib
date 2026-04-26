@@ -25,7 +25,14 @@ type Result struct {
 	Error  string
 }
 
-var coverClient = &http.Client{Timeout: 10 * time.Second}
+var coverClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+	},
+}
+
+const coverUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 // Scrape writes metadata tags into the audio file at filePath.
 // MP3 files get ID3v2.4 tags; FLAC files get Vorbis Comments.
@@ -78,7 +85,12 @@ func Scrape(cfg Config, song *model.Song, filePath, lyrics string) Result {
 
 // downloadCoverImage fetches the cover image and returns raw bytes + MIME type.
 func downloadCoverImage(url string) ([]byte, string, error) {
-	resp, err := coverClient.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("User-Agent", coverUserAgent)
+	resp, err := coverClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("http get: %w", err)
 	}
@@ -88,7 +100,8 @@ func downloadCoverImage(url string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("http status %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	// Limit to 10 MB to guard against unexpectedly large responses.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		return nil, "", fmt.Errorf("read body: %w", err)
 	}

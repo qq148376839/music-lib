@@ -49,6 +49,8 @@ func writeFLACTags(filePath string, song *model.Song, coverData []byte, coverMIM
 	}
 
 	// Embed cover art as a PICTURE metadata block.
+	// Remove any existing PICTURE blocks first to prevent accumulation
+	// when the same file is scraped multiple times (e.g. after quality upgrade).
 	if len(coverData) > 0 {
 		pic, err := flacpicture.NewFromImageData(
 			flacpicture.PictureTypeFrontCover,
@@ -57,6 +59,13 @@ func writeFLACTags(filePath string, song *model.Song, coverData []byte, coverMIM
 			coverMIME,
 		)
 		if err == nil {
+			cleaned := f.Meta[:0]
+			for _, block := range f.Meta {
+				if block.Type != flac.Picture {
+					cleaned = append(cleaned, block)
+				}
+			}
+			f.Meta = cleaned
 			picBlock := pic.Marshal()
 			f.Meta = append(f.Meta, &picBlock)
 		}
