@@ -5,9 +5,8 @@
 # Session 日志（自动生成，不提交）
 dev-log/*.md
 
-# 下载缓存
-data/downloads/
-data/video_output/
+# 运行时数据（SQLite + cookie + 下载缓存）
+data/
 
 # Go
 *.exe

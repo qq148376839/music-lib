@@ -18,6 +18,13 @@ const sourceOptions = computed(() => [
   ...store.providers.map((p) => ({ label: p.name, value: p.id })),
 ])
 
+// Platform capability check
+const canRecommend = computed(() => {
+  if (source.value === 'all') return store.providers.some((p) => p.capabilities?.playlist_recommended)
+  const p = store.providers.find((v) => v.id === source.value)
+  return p?.capabilities?.playlist_recommended ?? false
+})
+
 // --- Song Search ---
 const songKeyword = ref('')
 const songLoading = ref(false)
@@ -80,8 +87,9 @@ async function loadRecommended() {
   plDetail.value = null
   try {
     if (source.value === 'all') {
+      const supported = store.providers.filter((p) => p.capabilities?.playlist_recommended)
       const results = await Promise.allSettled(
-        store.providers.map((p) => api.getRecommended(p.id).catch(() => []))
+        supported.map((p) => api.getRecommended(p.id).catch(() => []))
       )
       playlists.value = results.flatMap((r) => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []))
     } else {
@@ -267,7 +275,7 @@ function onDownloadSelect(key, song) {
             <n-input v-model:value="plKeyword" placeholder="搜索歌单..." clearable
               @keydown.enter="searchPlaylists" style="min-width: 200px" />
             <n-button type="primary" :loading="plLoading" @click="searchPlaylists">搜索</n-button>
-            <n-button :loading="plLoading" @click="loadRecommended">推荐</n-button>
+            <n-button v-if="canRecommend" :loading="plLoading" @click="loadRecommended">推荐</n-button>
           </n-space>
           <n-spin :show="plLoading">
             <n-empty v-if="!plLoading && playlists.length === 0" description="搜索或浏览推荐歌单" />

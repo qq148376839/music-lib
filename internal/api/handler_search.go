@@ -26,6 +26,8 @@ func (s *Server) handleProviders(c *gin.Context) {
 		PlaylistSongs       bool   `json:"playlist_songs"`
 		PlaylistParse       bool   `json:"playlist_parse"`
 		PlaylistRecommended bool   `json:"playlist_recommended"`
+		Charts              bool   `json:"charts"`
+		ChartSongs          bool   `json:"chart_songs"`
 	}
 	var list []providerInfo
 	for name, p := range s.providers {
@@ -39,6 +41,8 @@ func (s *Server) handleProviders(c *gin.Context) {
 			PlaylistSongs:       p.GetPlaylistSongs != nil,
 			PlaylistParse:       p.ParsePlaylist != nil,
 			PlaylistRecommended: p.GetRecommended != nil,
+			Charts:              p.GetCharts != nil,
+			ChartSongs:          p.GetChartSongs != nil,
 		})
 	}
 	writeOK(c, list)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/url"
 	"regexp"
@@ -408,7 +409,8 @@ func (q *QQ) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, erro
 	}
 
 	if len(resp.Cdlist) == 0 {
-		return nil, nil, errors.New("playlist not found (empty cdlist)")
+		slog.Warn("qq playlist cdlist empty, trying v2", "id", id)
+		return q.fetchPlaylistDetailV2(id)
 	}
 
 	info := resp.Cdlist[0]
@@ -469,6 +471,147 @@ func (q *QQ) fetchPlaylistDetail(id string) (*model.Playlist, []model.Song, erro
 			},
 		})
 	}
+	return playlist, songs, nil
+}
+
+// fetchPlaylistDetailV2 通过 musicu.fcg 统一接口获取歌单详情（content_id 兼容）。
+// 当旧接口 fcg_ucc_getcdinfo_byids_cp.fcg 返回空 cdlist 时作为 fallback。
+func (q *QQ) fetchPlaylistDetailV2(id string) (*model.Playlist, []model.Song, error) {
+	idNum, _ := strconv.ParseInt(id, 10, 64)
+	if idNum == 0 {
+		return nil, nil, fmt.Errorf("invalid playlist id: %s", id)
+	}
+
+	reqData := map[string]interface{}{
+		"comm": map[string]interface{}{
+			"ct": 24,
+			"cv": 10000,
+		},
+		"req": map[string]interface{}{
+			"module": "music.srfDissInfo.DissInfo",
+			"method": "CgiGetDiss",
+			"param": map[string]interface{}{
+				"disstid":      idNum,
+				"onlysonglist": 0,
+				"song_begin":   0,
+				"song_num":     100,
+			},
+		},
+	}
+
+	jsonData, _ := json.Marshal(reqData)
+
+	body, err := utils.Post("https://u.y.qq.com/cgi-bin/musicu.fcg",
+		bytes.NewReader(jsonData),
+		utils.WithHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"),
+		utils.WithHeader("Referer", "https://y.qq.com/"),
+		utils.WithHeader("Content-Type", "application/json"),
+		utils.WithHeader("Cookie", q.cookie),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("qq playlist v2 request error: %w", err)
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Req  struct {
+			Code int `json:"code"`
+			Data struct {
+				DirInfo struct {
+					Title  string `json:"title"`
+					PicURL string `json:"picurl"`
+					Desc   string `json:"desc"`
+				} `json:"dirinfo"`
+				Songlist []struct {
+					Mid      string `json:"mid"`
+					Name     string `json:"name"`
+					Interval int    `json:"interval"`
+					Album    struct {
+						Mid  string `json:"mid"`
+						Name string `json:"name"`
+					} `json:"album"`
+					Singer []struct {
+						Name string `json:"name"`
+					} `json:"singer"`
+					File struct {
+						Size128  int64 `json:"size_128mp3"`
+						Size320  int64 `json:"size_320mp3"`
+						SizeFlac int64 `json:"size_flac"`
+					} `json:"file"`
+				} `json:"songlist"`
+				TotalSongNum int `json:"total_song_num"`
+			} `json:"data"`
+		} `json:"req"`
+	}
+
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, nil, fmt.Errorf("qq playlist v2 json error: %w", err)
+	}
+
+	if resp.Code != 0 || resp.Req.Code != 0 {
+		slog.Error("qq playlist v2 also failed", "id", id, "code", resp.Code, "req_code", resp.Req.Code)
+		return nil, nil, fmt.Errorf("playlist not found (empty cdlist, fallback also failed: code=%d/%d)", resp.Code, resp.Req.Code)
+	}
+
+	data := resp.Req.Data
+	playlist := &model.Playlist{
+		Source:      "qq",
+		ID:          id,
+		Name:        data.DirInfo.Title,
+		Cover:       data.DirInfo.PicURL,
+		Description: data.DirInfo.Desc,
+		TrackCount:  data.TotalSongNum,
+		Link:        fmt.Sprintf("https://y.qq.com/n/ryqq/playlist/%s", id),
+	}
+
+	var songs []model.Song
+	for _, item := range data.Songlist {
+		var artistNames []string
+		for _, s := range item.Singer {
+			artistNames = append(artistNames, s.Name)
+		}
+
+		var coverURL string
+		if item.Album.Mid != "" {
+			coverURL = fmt.Sprintf("https://y.gtimg.cn/music/photo_new/T002R300x300M000%s.jpg", item.Album.Mid)
+		}
+
+		fileSize := item.File.Size128
+		bitrate := 128
+		if item.File.SizeFlac > 0 {
+			fileSize = item.File.SizeFlac
+			if item.Interval > 0 {
+				bitrate = int(fileSize * 8 / 1000 / int64(item.Interval))
+			} else {
+				bitrate = 800
+			}
+		} else if item.File.Size320 > 0 {
+			fileSize = item.File.Size320
+			bitrate = 320
+		}
+
+		songMID := item.Mid
+		songs = append(songs, model.Song{
+			Source:   "qq",
+			ID:       songMID,
+			Name:     item.Name,
+			Artist:   strings.Join(artistNames, "、"),
+			Album:    item.Album.Name,
+			Duration: item.Interval,
+			Size:     fileSize,
+			Bitrate:  bitrate,
+			Cover:    coverURL,
+			Link:     fmt.Sprintf("https://y.qq.com/n/ryqq/songDetail/%s", songMID),
+			Extra: map[string]string{
+				"songmid": songMID,
+			},
+		})
+	}
+
+	if len(songs) == 0 {
+		return nil, nil, errors.New("playlist not found (empty cdlist, fallback returned no songs)")
+	}
+
 	return playlist, songs, nil
 }
 

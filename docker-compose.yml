@@ -1,7 +1,7 @@
 services:
   music-lib:
+    build: .
     image: rio22/music-lib:latest
-    # build: .  # uncomment for local build
     ports:
       - "35280:35280"
     environment:

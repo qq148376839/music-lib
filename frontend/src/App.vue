@@ -58,6 +58,19 @@ async function initApp() {
     store.nasMusicDir = status?.music_dir || ''
   } catch { /* NAS not configured */ }
 
+  // Fetch provider capabilities and merge into store.
+  try {
+    const caps = await api.getProviders()
+    if (Array.isArray(caps)) {
+      for (const cap of caps) {
+        const p = store.providers.find((v) => v.id === cap.name)
+        if (p) {
+          p.capabilities = cap
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
   for (const platform of ['netease', 'qq']) {
     try {
       const data = await api.getLoginStatus(platform)

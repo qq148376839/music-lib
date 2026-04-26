@@ -51,14 +51,17 @@ func main() {
 	// 6. Load cookies.
 	netease.SetConfigDir(cfgDir)
 	netease.LoadCookieFromDisk()
-	if loggedIn, nickname := netease.GetLoginStatus(); loggedIn {
-		slog.Info("netease cookie loaded", "user", nickname)
-	}
 	qq.SetConfigDir(cfgDir)
 	qq.LoadCookieFromDisk()
-	if loggedIn, nickname := qq.GetLoginStatus(); loggedIn {
-		slog.Info("qq cookie loaded", "user", nickname)
-	}
+
+	// 6b. Log data restoration summary.
+	neteaseOK, _ := netease.GetLoginStatus()
+	qqOK, _ := qq.GetLoginStatus()
+	slog.Info("data restored",
+		"tasks", len(existingTasks),
+		"netease_cookie", neteaseOK,
+		"qq_cookie", qqOK,
+	)
 
 	// 7. Login manager.
 	qrProviders := map[string]login.QRProvider{
@@ -150,7 +153,11 @@ func main() {
 		scheduler := monitor.NewScheduler(db, dlMgr, chartProviders)
 		scheduler.Start()
 		api.SetMonitorScheduler(scheduler)
-		slog.Info("chart monitor enabled", "platforms", len(chartProviders))
+		monitorCount := 0
+		if monitors, err := store.ListMonitors(db); err == nil {
+			monitorCount = len(monitors)
+		}
+		slog.Info("chart monitor enabled", "platforms", len(chartProviders), "monitors", monitorCount)
 	}
 
 	// 15. Create router.
