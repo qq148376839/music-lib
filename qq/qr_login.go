@@ -165,7 +165,11 @@ func (p *QQQRProvider) listenMQTT(ctx context.Context, sess *qqMusicSession) {
 		},
 	})
 	if err != nil {
-		slog.Error("qq.mqtt_connect_failed", "error", err)
+		var rc byte
+		if connAck != nil {
+			rc = connAck.ReasonCode
+		}
+		slog.Error("qq.mqtt_connect_failed", "error", err, "reason_code", rc)
 		sess.mu.Lock()
 		sess.state = "error"
 		sess.mu.Unlock()
@@ -294,13 +298,21 @@ func (p *QQQRProvider) PollQR(ctx context.Context, sessionKey string) (login.Pol
 		p.cleanup(sessionKey)
 		return login.PollResult{State: login.StateError}, fmt.Errorf("login failed")
 	case "cookies":
-		result, err := p.exchangeForMusicKey(ctx, sess.qrcodeID, cookies)
-		p.cleanup(sessionKey)
-		if err != nil {
-			slog.Error("qq.exchange_failed", "error", err)
-			return login.PollResult{State: login.StateError}, err
+		// Use MQTT cookies directly — skip the Login exchange (was returning code=1000).
+		uin := cookies["qqmusic_uin"]
+		key := cookies["qqmusic_key"]
+		if uin == "" || key == "" {
+			p.cleanup(sessionKey)
+			return login.PollResult{State: login.StateError}, fmt.Errorf("missing qqmusic_uin/qqmusic_key")
 		}
-		return result, nil
+		cookieStr := fmt.Sprintf("uin=%s; qqmusic_key=%s; qm_keyst=%s", uin, key, key)
+		slog.Info("qq.login_direct_cookies", "uin", uin, "key_len", len(key), "key_prefix", key[:min(len(key), 10)])
+		p.cleanup(sessionKey)
+		return login.PollResult{
+			State:    login.StateSuccess,
+			Cookies:  cookieStr,
+			Nickname: uin,
+		}, nil
 	default:
 		return login.PollResult{State: login.StateWaitingScan}, nil
 	}
