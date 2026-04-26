@@ -70,6 +70,7 @@ func NewRouter(
 	// Chart / Monitor APIs
 	engine.GET("/api/charts", srv.handleGetCharts)
 	engine.GET("/api/monitors", srv.handleListMonitors)
+	engine.POST("/api/monitors/resolve", srv.handleResolvePlaylist)
 	engine.POST("/api/monitors", srv.handleCreateMonitor)
 	engine.PUT("/api/monitors/:id", srv.handleUpdateMonitor)
 	engine.DELETE("/api/monitors/:id", srv.handleDeleteMonitor)

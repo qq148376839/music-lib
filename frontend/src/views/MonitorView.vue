@@ -2,7 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import {
   NCard, NButton, NTag, NSwitch, NModal, NForm, NFormItem,
-  NInput, NInputNumber, NSelect, NSpace, NSpin, NEmpty,
+  NInput, NInputNumber, NInputGroup, NSelect, NSpace, NSpin, NEmpty,
   NDescriptions, NDescriptionsItem, NPopconfirm, useMessage,
 } from 'naive-ui'
 import { api } from '../api.js'
@@ -20,6 +20,11 @@ const chartPlatforms = [
   { label: '酷狗', value: 'kugou' },
 ]
 
+const monitorTypes = [
+  { label: '榜单', value: 'chart' },
+  { label: '歌单', value: 'playlist' },
+]
+
 const intervalOptions = [
   { label: '每6小时', value: 6 },
   { label: '每12小时', value: 12 },
@@ -29,10 +34,12 @@ const intervalOptions = [
 // Create/Edit modal
 const showModal = ref(false)
 const editing = ref(null) // null = create, object = edit
-const form = ref({ name: '', platform: '', chart_id: '', top_n: 20, interval: 12 })
+const form = ref({ name: '', platform: '', chart_id: '', top_n: 20, interval: 12, type: 'chart', source_url: '' })
 const charts = ref([])
 const chartsLoading = ref(false)
 const saving = ref(false)
+const resolving = ref(false)
+const resolved = ref(null)
 
 // Runs modal
 const showRuns = ref(false)
@@ -53,15 +60,22 @@ async function loadMonitors() {
 
 function openCreate() {
   editing.value = null
-  form.value = { name: '', platform: '', chart_id: '', top_n: 20, interval: 12 }
+  form.value = { name: '', platform: '', chart_id: '', top_n: 20, interval: 12, type: 'chart', source_url: '' }
   charts.value = []
+  resolved.value = null
   showModal.value = true
 }
 
 function openEdit(m) {
   editing.value = m
-  form.value = { name: m.name, platform: m.platform, chart_id: m.chart_id, top_n: m.top_n, interval: m.interval }
-  loadCharts(m.platform)
+  form.value = {
+    name: m.name, platform: m.platform, chart_id: m.chart_id,
+    top_n: m.top_n, interval: m.interval,
+    type: m.type || 'chart',
+    source_url: m.source_url || '',
+  }
+  resolved.value = null
+  if (form.value.type === 'chart') loadCharts(m.platform)
   showModal.value = true
 }
 
@@ -79,13 +93,27 @@ async function loadCharts(platform) {
 }
 
 watch(() => form.value.platform, (v) => {
+  if (form.value.type === 'chart') {
+    form.value.chart_id = ''
+    loadCharts(v)
+  }
+})
+
+watch(() => form.value.type, () => {
+  form.value.platform = ''
   form.value.chart_id = ''
-  loadCharts(v)
+  form.value.source_url = ''
+  form.value.top_n = form.value.type === 'playlist' ? 100 : 20
+  resolved.value = null
+  charts.value = []
 })
 
 async function saveMonitor() {
-  if (!form.value.name || !form.value.platform || !form.value.chart_id) {
-    return message.warning('请填写完整信息')
+  if (!form.value.name) return message.warning('请填写名称')
+  if (form.value.type === 'chart') {
+    if (!form.value.platform || !form.value.chart_id) return message.warning('请选择平台和榜单')
+  } else {
+    if (!form.value.source_url || !resolved.value) return message.warning('请先解析歌单 URL')
   }
   saving.value = true
   try {
@@ -102,6 +130,23 @@ async function saveMonitor() {
     message.error(e.message || '保存失败')
   } finally {
     saving.value = false
+  }
+}
+
+async function resolvePlaylist() {
+  if (!form.value.source_url) return message.warning('请输入歌单 URL')
+  resolving.value = true
+  resolved.value = null
+  try {
+    const data = await api.resolvePlaylist(form.value.source_url)
+    resolved.value = data
+    form.value.platform = data.platform
+    form.value.chart_id = data.playlist_id
+    if (!form.value.name) form.value.name = data.name
+  } catch (e) {
+    message.error(e.message || '解析失败')
+  } finally {
+    resolving.value = false
   }
 }
 
@@ -161,7 +206,7 @@ onMounted(loadMonitors)
 <template>
   <div>
     <n-space justify="space-between" align="center" style="margin-bottom: 16px">
-      <span style="font-size: 16px; font-weight: 600">榜单监控</span>
+      <span style="font-size: 16px; font-weight: 600">监控管理</span>
       <n-button type="primary" size="small" @click="openCreate">新建监控</n-button>
     </n-space>
 
@@ -173,6 +218,7 @@ onMounted(loadMonitors)
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
               <span style="font-weight: 500">{{ m.name }}</span>
               <n-tag size="tiny" :bordered="false">{{ getSourceName(m.platform) }}</n-tag>
+              <n-tag v-if="m.type === 'playlist'" size="tiny" type="info" :bordered="false">歌单</n-tag>
               <n-tag v-if="!m.enabled" size="tiny" type="default">已暂停</n-tag>
             </div>
             <div style="font-size: 12px; color: #8b949e">
@@ -202,15 +248,37 @@ onMounted(loadMonitors)
         <n-form-item label="名称">
           <n-input v-model:value="form.name" placeholder="如: 网易热歌榜" />
         </n-form-item>
-        <n-form-item label="平台">
-          <n-select v-model:value="form.platform" :options="chartPlatforms" placeholder="选择平台" :disabled="!!editing" />
+        <n-form-item label="类型" v-if="!editing">
+          <n-select v-model:value="form.type" :options="monitorTypes" />
         </n-form-item>
-        <n-form-item label="榜单">
-          <n-select v-model:value="form.chart_id" :options="charts" :loading="chartsLoading"
-            placeholder="先选平台" :disabled="!form.platform || !!editing" />
-        </n-form-item>
+        <template v-if="form.type === 'chart'">
+          <n-form-item label="平台">
+            <n-select v-model:value="form.platform" :options="chartPlatforms" placeholder="选择平台" :disabled="!!editing" />
+          </n-form-item>
+          <n-form-item label="榜单">
+            <n-select v-model:value="form.chart_id" :options="charts" :loading="chartsLoading"
+              placeholder="先选平台" :disabled="!form.platform || !!editing" />
+          </n-form-item>
+        </template>
+        <template v-if="form.type === 'playlist'">
+          <n-form-item label="歌单URL">
+            <n-space vertical style="width: 100%">
+              <n-input-group>
+                <n-input v-model:value="form.source_url" placeholder="粘贴歌单链接" :disabled="!!editing" />
+                <n-button type="primary" :loading="resolving" @click="resolvePlaylist" :disabled="!!editing">解析</n-button>
+              </n-input-group>
+              <n-card v-if="resolved" size="small" :bordered="true" style="background: #f6f8fa">
+                <n-descriptions :column="1" label-placement="left" size="small">
+                  <n-descriptions-item label="平台">{{ getSourceName(resolved.platform) }}</n-descriptions-item>
+                  <n-descriptions-item label="歌单">{{ resolved.name }}</n-descriptions-item>
+                  <n-descriptions-item label="歌曲数">{{ resolved.track_count }}</n-descriptions-item>
+                </n-descriptions>
+              </n-card>
+            </n-space>
+          </n-form-item>
+        </template>
         <n-form-item label="Top N">
-          <n-input-number v-model:value="form.top_n" :min="1" :max="100" style="width: 100%" />
+          <n-input-number v-model:value="form.top_n" :min="1" :max="form.type === 'playlist' ? 500 : 100" style="width: 100%" />
         </n-form-item>
         <n-form-item label="间隔">
           <n-select v-model:value="form.interval" :options="intervalOptions" />

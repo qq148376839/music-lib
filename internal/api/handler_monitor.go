@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/guohuiyuan/music-lib/internal/monitor"
@@ -15,6 +16,87 @@ var monScheduler *monitor.Scheduler
 // SetMonitorScheduler wires the scheduler for manual trigger support.
 func SetMonitorScheduler(s *monitor.Scheduler) {
 	monScheduler = s
+}
+
+// platformForURL guesses the platform from the URL's hostname.
+// Returns empty string if unrecognized.
+func platformForURL(rawURL string) string {
+	lower := strings.ToLower(rawURL)
+	switch {
+	case strings.Contains(lower, "music.163.com"):
+		return "netease"
+	case strings.Contains(lower, "y.qq.com"), strings.Contains(lower, "music.qq.com"):
+		return "qq"
+	case strings.Contains(lower, "kugou.com"):
+		return "kugou"
+	case strings.Contains(lower, "kuwo.cn"):
+		return "kuwo"
+	case strings.Contains(lower, "5sing.kugou.com"), strings.Contains(lower, "5sing.com"):
+		return "fivesing"
+	case strings.Contains(lower, "bilibili.com"):
+		return "bilibili"
+	case strings.Contains(lower, "music.migu.cn"), strings.Contains(lower, "soda."):
+		return "soda"
+	}
+	return ""
+}
+
+// POST /api/monitors/resolve
+func (s *Server) handleResolvePlaylist(c *gin.Context) {
+	var body struct {
+		URL string `json:"url" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "url is required"})
+		return
+	}
+
+	// Guess the platform from the URL to avoid trying every provider.
+	guessedPlatform := platformForURL(body.URL)
+
+	// Try providers that have ParsePlaylist. If we guessed a platform, try that first.
+	type tryResult struct {
+		platform string
+		pf       ProviderFuncs
+	}
+	var candidates []tryResult
+	if guessedPlatform != "" {
+		if pf, ok := s.providers[guessedPlatform]; ok && pf.ParsePlaylist != nil {
+			candidates = append(candidates, tryResult{guessedPlatform, pf})
+		}
+	}
+	// Also add remaining providers as fallback (in case the guess was wrong).
+	for name, pf := range s.providers {
+		if name == guessedPlatform {
+			continue
+		}
+		if pf.ParsePlaylist != nil {
+			candidates = append(candidates, tryResult{name, pf})
+		}
+	}
+
+	if len(candidates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported platform for URL"})
+		return
+	}
+
+	for _, cand := range candidates {
+		playlist, songs, err := cand.pf.ParsePlaylist(body.URL)
+		if err != nil {
+			continue
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"platform":    cand.platform,
+			"playlist_id": playlist.ID,
+			"name":        playlist.Name,
+			"track_count": len(songs),
+			"cover":       playlist.Cover,
+			"creator":     playlist.Creator,
+		})
+		return
+	}
+
+	c.JSON(http.StatusBadGateway, gin.H{"error": "failed to resolve playlist: all providers failed"})
 }
 
 // GET /api/charts?platform=X
@@ -58,30 +140,44 @@ func (s *Server) handleCreateMonitor(c *gin.Context) {
 	}
 
 	var body struct {
-		Name     string `json:"name" binding:"required"`
-		Platform string `json:"platform" binding:"required"`
-		ChartID  string `json:"chart_id" binding:"required"`
-		TopN     int    `json:"top_n"`
-		Interval int    `json:"interval"`
+		Name      string `json:"name" binding:"required"`
+		Platform  string `json:"platform" binding:"required"`
+		ChartID   string `json:"chart_id" binding:"required"`
+		TopN      int    `json:"top_n"`
+		Interval  int    `json:"interval"`
+		Type      string `json:"type"`
+		SourceURL string `json:"source_url"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Validate platform has chart support.
+	if body.Type == "" {
+		body.Type = "chart"
+	}
+
+	// playlist type requires source_url.
+	if body.Type == "playlist" && body.SourceURL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_url is required for playlist type"})
+		return
+	}
+
+	// Validate platform exists.
 	if _, ok := s.providers[body.Platform]; !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown platform"})
 		return
 	}
 
 	m := &store.Monitor{
-		Name:     body.Name,
-		Platform: body.Platform,
-		ChartID:  body.ChartID,
-		TopN:     body.TopN,
-		Interval: body.Interval,
-		Enabled:  true,
+		Name:      body.Name,
+		Platform:  body.Platform,
+		ChartID:   body.ChartID,
+		TopN:      body.TopN,
+		Interval:  body.Interval,
+		Enabled:   true,
+		Type:      body.Type,
+		SourceURL: body.SourceURL,
 	}
 	if err := store.CreateMonitor(s.db, m); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

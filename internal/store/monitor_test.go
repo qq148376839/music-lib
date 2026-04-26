@@ -398,6 +398,165 @@ func TestIsSongDownloaded(t *testing.T) {
 	}
 }
 
+// --- Playlist type tests ---
+
+func TestCreateMonitor_PlaylistType(t *testing.T) {
+	db := testDB(t)
+
+	m := &Monitor{
+		Name:      "My Playlist",
+		Platform:  "netease",
+		ChartID:   "3778678",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/#/playlist?id=3778678",
+	}
+	if err := CreateMonitor(db, m); err != nil {
+		t.Fatalf("CreateMonitor: %v", err)
+	}
+
+	got, err := GetMonitor(db, m.ID)
+	if err != nil {
+		t.Fatalf("GetMonitor: %v", err)
+	}
+	if got.Type != "playlist" {
+		t.Errorf("Type: got %q, want playlist", got.Type)
+	}
+	if got.SourceURL != "https://music.163.com/#/playlist?id=3778678" {
+		t.Errorf("SourceURL: got %q", got.SourceURL)
+	}
+}
+
+func TestCreateMonitor_PlaylistTopN(t *testing.T) {
+	db := testDB(t)
+
+	// playlist default TopN should be 100
+	m := &Monitor{
+		Name:      "Playlist Default",
+		Platform:  "netease",
+		ChartID:   "111",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=111",
+	}
+	if err := CreateMonitor(db, m); err != nil {
+		t.Fatal(err)
+	}
+	if m.TopN != 100 {
+		t.Errorf("playlist TopN default: got %d, want 100", m.TopN)
+	}
+
+	// playlist TopN clamp at 500
+	m2 := &Monitor{
+		Name:      "Playlist Clamp",
+		Platform:  "netease",
+		ChartID:   "222",
+		TopN:      999,
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=222",
+	}
+	if err := CreateMonitor(db, m2); err != nil {
+		t.Fatal(err)
+	}
+	if m2.TopN != 500 {
+		t.Errorf("playlist TopN clamp: got %d, want 500", m2.TopN)
+	}
+}
+
+func TestCreateMonitor_DuplicateCheck(t *testing.T) {
+	db := testDB(t)
+
+	m1 := &Monitor{
+		Name:      "Dup 1",
+		Platform:  "netease",
+		ChartID:   "999",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=999",
+	}
+	if err := CreateMonitor(db, m1); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+
+	// Duplicate (same platform, chart_id, type) should fail.
+	m2 := &Monitor{
+		Name:      "Dup 2",
+		Platform:  "netease",
+		ChartID:   "999",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=999",
+	}
+	err := CreateMonitor(db, m2)
+	if err == nil {
+		t.Fatal("expected error for duplicate (platform, chart_id, type)")
+	}
+}
+
+func TestCreateMonitor_DuplicateCheck_DifferentType(t *testing.T) {
+	db := testDB(t)
+
+	// Same platform + chart_id but different type should succeed.
+	m1 := &Monitor{
+		Name:     "Chart",
+		Platform: "netease",
+		ChartID:  "888",
+		Type:     "chart",
+	}
+	if err := CreateMonitor(db, m1); err != nil {
+		t.Fatalf("chart create: %v", err)
+	}
+
+	m2 := &Monitor{
+		Name:      "Playlist",
+		Platform:  "netease",
+		ChartID:   "888",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=888",
+	}
+	if err := CreateMonitor(db, m2); err != nil {
+		t.Fatalf("playlist create (different type): %v", err)
+	}
+}
+
+func TestUpdateMonitor_PlaylistTopNCap(t *testing.T) {
+	db := testDB(t)
+
+	m := &Monitor{
+		Name:      "Update Playlist",
+		Platform:  "netease",
+		ChartID:   "777",
+		Type:      "playlist",
+		SourceURL: "https://music.163.com/playlist?id=777",
+		TopN:      50,
+	}
+	_ = CreateMonitor(db, m)
+
+	m.TopN = 999
+	if err := UpdateMonitor(db, m); err != nil {
+		t.Fatal(err)
+	}
+	if m.TopN != 500 {
+		t.Errorf("playlist TopN should be clamped to 500 on update, got %d", m.TopN)
+	}
+}
+
+func TestCreateMonitor_ChartTypeDefault(t *testing.T) {
+	db := testDB(t)
+
+	// Type not set — should default to "chart"
+	m := &Monitor{
+		Name:     "No Type",
+		Platform: "netease",
+		ChartID:  "666",
+	}
+	if err := CreateMonitor(db, m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Type != "chart" {
+		t.Errorf("Type should default to 'chart', got %q", m.Type)
+	}
+	if m.TopN != 20 {
+		t.Errorf("chart default TopN: got %d, want 20", m.TopN)
+	}
+}
+
 // --- UpdateMonitorSchedule ---
 
 func TestUpdateMonitorSchedule(t *testing.T) {

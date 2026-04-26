@@ -142,11 +142,12 @@ func main() {
 	if dlMgr != nil {
 		chartProviders := make(map[string]monitor.ChartProvider)
 		for name, p := range providers {
-			if p.GetChartSongs != nil {
+			if p.GetChartSongs != nil || p.GetPlaylistSongs != nil {
 				chartProviders[name] = monitor.ChartProvider{
-					GetChartSongs:  p.GetChartSongs,
-					GetDownloadURL: p.GetDownloadURL,
-					GetLyrics:      p.GetLyrics,
+					GetChartSongs:    p.GetChartSongs,
+					GetPlaylistSongs: p.GetPlaylistSongs,
+					GetDownloadURL:   p.GetDownloadURL,
+					GetLyrics:        p.GetLyrics,
 				}
 			}
 		}

@@ -11,11 +11,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// ChartProvider supplies chart songs for a given platform.
+// ChartProvider supplies chart/playlist songs for a given platform.
 type ChartProvider struct {
-	GetChartSongs  func(chartID string, limit int) ([]model.Song, error)
-	GetDownloadURL func(*model.Song) (string, error)
-	GetLyrics      func(*model.Song) (string, error)
+	GetChartSongs    func(chartID string, limit int) ([]model.Song, error)
+	GetPlaylistSongs func(playlistID string) ([]model.Song, error)
+	GetDownloadURL   func(*model.Song) (string, error)
+	GetLyrics        func(*model.Song) (string, error)
 }
 
 // Scheduler polls the database for due monitors and executes them.
@@ -104,7 +105,7 @@ func (s *Scheduler) execute(m *store.Monitor) {
 		return
 	}
 
-	slog.Info("monitor.execute.start", "monitor_id", m.ID, "name", m.Name, "chart", m.ChartID)
+	slog.Info("monitor.execute.start", "monitor_id", m.ID, "name", m.Name, "type", m.Type, "chart", m.ChartID)
 
 	// Create run record.
 	run := &store.MonitorRun{
@@ -117,12 +118,35 @@ func (s *Scheduler) execute(m *store.Monitor) {
 		return
 	}
 
-	// Fetch chart songs.
-	songs, err := provider.GetChartSongs(m.ChartID, m.TopN)
-	if err != nil {
-		s.finishRun(run, 0, 0, 0, "failed", err.Error())
+	// Fetch songs based on monitor type.
+	var songs []model.Song
+	var fetchErr error
+
+	if m.Type == "playlist" {
+		if provider.GetPlaylistSongs == nil {
+			errMsg := "provider does not support GetPlaylistSongs"
+			slog.Error("monitor.execute.failed", "monitor_id", m.ID, "error", errMsg)
+			s.finishRun(run, 0, 0, 0, "failed", errMsg)
+			store.UpdateMonitorSchedule(s.db, m)
+			return
+		}
+		songs, fetchErr = provider.GetPlaylistSongs(m.ChartID)
+		if fetchErr == nil {
+			slog.Info("monitor.playlist.fetched", "monitor_id", m.ID, "total", len(songs))
+			// Apply TopN limit after fetch (GetPlaylistSongs has no limit param).
+			if len(songs) > m.TopN {
+				songs = songs[:m.TopN]
+			}
+		}
+	} else {
+		// type == "chart" or empty (legacy compatibility)
+		songs, fetchErr = provider.GetChartSongs(m.ChartID, m.TopN)
+	}
+
+	if fetchErr != nil {
+		s.finishRun(run, 0, 0, 0, "failed", fetchErr.Error())
 		store.UpdateMonitorSchedule(s.db, m)
-		slog.Warn("monitor.execute.fetch_error", "monitor_id", m.ID, "error", err)
+		slog.Error("monitor.execute.failed", "monitor_id", m.ID, "error", fetchErr)
 		return
 	}
 
@@ -146,6 +170,7 @@ func (s *Scheduler) execute(m *store.Monitor) {
 
 	run.NewQueued = len(newSongs)
 	run.Skipped = run.TotalFetched - run.NewQueued
+	slog.Info("monitor.dedup", "monitor_id", m.ID, "new", run.NewQueued, "skipped", run.Skipped)
 
 	if len(newSongs) > 0 && s.dlMgr != nil {
 		batchName := m.Name + " - " + time.Now().Format("2006-01-02")

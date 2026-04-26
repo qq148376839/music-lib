@@ -96,4 +96,5 @@ export const api = {
   deleteMonitor: (id) => del(`/api/monitors/${id}`),
   getMonitorRuns: (id) => request(`/api/monitors/${id}/runs`),
   triggerMonitor: (id) => post(`/api/monitors/${id}/trigger`),
+  resolvePlaylist: (url) => post('/api/monitors/resolve', { url }),
 }

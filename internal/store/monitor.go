@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Monitor is the GORM model for chart monitoring rules.
+// Monitor is the GORM model for chart/playlist monitoring rules.
 type Monitor struct {
 	ID        uint       `gorm:"primaryKey" json:"id"`
 	Name      string     `gorm:"not null" json:"name"`
@@ -18,6 +18,8 @@ type Monitor struct {
 	Enabled   bool       `gorm:"default:true" json:"enabled"`
 	LastRunAt *time.Time `json:"last_run_at"`
 	NextRunAt time.Time  `gorm:"not null" json:"next_run_at"`
+	Type      string     `gorm:"not null;default:chart" json:"type"`       // "chart" or "playlist"
+	SourceURL string     `gorm:"default:''" json:"source_url"`              // playlist 类型的原始 URL
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -37,26 +39,59 @@ type MonitorRun struct {
 
 // CreateMonitor inserts a new monitor rule.
 func CreateMonitor(db *gorm.DB, m *Monitor) error {
-	if m.TopN <= 0 {
-		m.TopN = 20
+	if m.Type == "" {
+		m.Type = "chart"
 	}
-	if m.TopN > 100 {
-		m.TopN = 100
+
+	if m.Type == "playlist" {
+		if m.TopN <= 0 {
+			m.TopN = 100
+		}
+		if m.TopN > 500 {
+			m.TopN = 500
+		}
+	} else {
+		if m.TopN <= 0 {
+			m.TopN = 20
+		}
+		if m.TopN > 100 {
+			m.TopN = 100
+		}
 	}
+
 	if m.Interval != 6 && m.Interval != 12 && m.Interval != 24 {
 		m.Interval = 12
 	}
+
+	// Uniqueness check: (platform, chart_id, type) must be unique.
+	var count int64
+	db.Model(&Monitor{}).
+		Where("platform = ? AND chart_id = ? AND type = ?", m.Platform, m.ChartID, m.Type).
+		Count(&count)
+	if count > 0 {
+		return fmt.Errorf("monitor already exists for this platform, chart_id, and type")
+	}
+
 	m.NextRunAt = time.Now().Add(time.Duration(m.Interval) * time.Hour)
 	return db.Create(m).Error
 }
 
 // UpdateMonitor updates an existing monitor rule.
 func UpdateMonitor(db *gorm.DB, m *Monitor) error {
-	if m.TopN <= 0 {
-		m.TopN = 20
-	}
-	if m.TopN > 100 {
-		m.TopN = 100
+	if m.Type == "playlist" {
+		if m.TopN <= 0 {
+			m.TopN = 100
+		}
+		if m.TopN > 500 {
+			m.TopN = 500
+		}
+	} else {
+		if m.TopN <= 0 {
+			m.TopN = 20
+		}
+		if m.TopN > 100 {
+			m.TopN = 100
+		}
 	}
 	if m.Interval != 6 && m.Interval != 12 && m.Interval != 24 {
 		m.Interval = 12
