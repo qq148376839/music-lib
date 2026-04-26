@@ -18,7 +18,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /music-lib ./cmd/serve
 
 # Stage 3: Minimal runtime image
 FROM docker.m.daocloud.io/library/alpine:3.20
-RUN apk --no-cache add ca-certificates tzdata
+RUN sed -i 's|https://dl-cdn.alpinelinux.org|https://mirrors.aliyun.com|g' /etc/apk/repositories && \
+    apk --no-cache add ca-certificates tzdata
 COPY --from=builder /music-lib /usr/local/bin/music-lib
 EXPOSE 35280
 VOLUME ["/music", "/data"]
